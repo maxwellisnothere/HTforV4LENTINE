@@ -1,4 +1,26 @@
-# Smart Farm Director — functional test results
+# Boss Assistant — functional test results
+
+## Version 3.2.0-boss-assistant — 2026-11-02
+
+Customer feedback identified two travel bugs: destinations were rejected when their streamed Column was missing, and walking polled short waypoints at the slow director interval. The previous source-offset tolerance could also finish outside the actual pillar interaction distance. Travel now uses persistent model pivots, acknowledges `PillarOpen`, checks distance to the source itself, shares arrival tolerances and advances waypoints in a cancellable Heartbeat worker.
+
+Normal target selection has been removed from the assistant. Start records the farm point and leaves native Auto alone while waiting. A selected-boss trip temporarily changes combat filters, waits for loot, then returns to that exact point and restores the prior settings. Optional Merchant trips, free dungeon entry and public-server hopping are separate controls, off by default.
+
+Verified so far:
+
+- **38/38 deterministic regression checks**: level/free-run/party checks, unstreamed destination routing, arrival tolerance, idle movement ownership, recorded return coordinates, boss death/loot/return vs hop transitions, failed-boss retreat, server filtering, payload expiry/server identity, hop-limit return, same-pillar routing, the 100-entry filter cap and Stop cancellation.
+- Main script compiles/loads in the connected client without runtime errors.
+- Live Town warp and return succeeded; return ended **0.56 studs** from the recorded position. The return cost **1,000 Silver** (5,876 → 4,876). The first stricter-acknowledgement test failed server confirmation; a retry succeeded. Source approach was subsequently tightened to 6 studs and is still being checked in additional trips.
+- A live field walk completed without the old 9-vs-10-stud dead zone.
+- While waiting for a dead boss for **167 seconds**, the assistant had no navigation worker, native Auto stayed on and `BotJson` remained byte-for-byte unchanged.
+- Live boss-entry test exposed that the pillar is outside the room; automatic trips now walk into the boss zone after arriving at its pillar. Another live check found the server retains at most **100** exclusions, while the old request sent **111**. Filters now prioritize nearby/adjacent-zone monsters and cap at 100, with native combat restricted to a 60-stud fixed area.
+- With those fixes, the live Lv.31 character entered the room, attacked Gorilla King (**32,614 → 21,964 HP observed**), retreated at the five-potion budget, returned home and resumed native Auto. Every saved Auto setting compared equal after restoration (semantic table comparison, independent of JSON key order). The boss was not killed in this run. The test then stopped the assistant/native Auto.
+- The public-server endpoint responded successfully from the actual client and the picker found an eligible different server. This read-only check does not prove teleport/reinjection works on every executor.
+- Endpoint/asset tests: `node deployment/worker.test.mjs` passes for all 9 PNG assets and response handling.
+
+Limits: the connected test character is Lv.31, whereas the customer's screenshots show Lv.99. Full dungeon completion cannot be validated with this character. Boss death/loot transitions are covered by isolated tests; actual boss defeat/card collection and cross-server continuation must be distinguished from those tests. Official warp unlocks, game fees and executor capability still apply.
+
+## Historical 3.0–3.1 tests (superseded normal-farm director)
 
 Date: 2026-11-02
 

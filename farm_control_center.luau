@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.1.0-travel"}
+local runtime = {alive = true, connections = {}, version = "3.2.0-boss-assistant"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -77,6 +77,11 @@ end
 local function serverNow()
 	local ok, value = pcall(workspace.GetServerTimeNow, workspace)
 	return ok and value or os.time()
+end
+
+local function displayError(value)
+	local first = tostring(value):match("[^\r\n]+") or "ไม่ทราบสาเหตุ"
+	return (first:gsub("^.-:%d+:%s*", ""))
 end
 
 local function new(className, properties, parent)
@@ -371,7 +376,7 @@ local pages = {}
 local navButtons = {}
 local currentPage = "overview"
 local PAGE_TITLES = {
-	play = "SMART FARM  /  เริ่มที่นี่",
+	play = "BOSS ASSISTANT  /  เริ่มที่นี่",
 	travel = "TRAVEL  /  เลือกด่านและกลับจุดเดิม",
 	overview = "OVERVIEW  /  ภาพรวม",
 	rewards = "REWARDS & CODES  /  รางวัล",
@@ -566,9 +571,11 @@ local state = {
 }
 
 local director = {
-	enabled = false, huntBosses = true, runDungeons = true,
+	enabled = false, huntBosses = true, runDungeons = false,
+	selectedBoss = "terra_colossus", hopMode = false, sellTrip = false,
+	hop = {visited = {}, count = 0, max = 10, nextAt = 0},
 	equipBest = true, travel = {active = false, token = 0, status = "เลือกด่านที่ต้องการ", bookmark = previousDirector and previousDirector.travel and previousDirector.travel.bookmark},
-	phase = "หยุดอยู่", detail = "กดเริ่ม ระบบจะเลือกเป้าหมายและเส้นทางให้",
+	phase = "พร้อมเฝ้าบอส", detail = "ยืนจุดฟาร์ม เปิด Auto ของเกม แล้วกดเริ่มเฝ้าบอส",
 	plan = nil, cooldowns = {}, blockedZones = {}, kills = 0,
 	startedAt = 0, startExp = 0, startSilver = 0,
 	ui = {}, navToken = 0,
@@ -583,8 +590,10 @@ local function menuFire(name, value)
 	return false
 end
 
+local lastAutoRequest = -10
 local function setAutoFarm(enabled)
-	if (player:GetAttribute("AutoOn") == true) ~= enabled then
+	if (player:GetAttribute("AutoOn") == true) ~= enabled and os.clock() - lastAutoRequest > 1 then
+		lastAutoRequest = os.clock()
 		if not menuFire("autoToggle") then toast("ไม่พบปุ่ม Auto ของเกม", "bad") end
 	end
 end
@@ -614,7 +623,7 @@ local bossPage = makePage("boss")
 local dungeonPage = makePage("dungeon")
 local gearPage = makePage("gear")
 
-makeNav("play", "เริ่มฟาร์ม", 1, ASSETS.Overview)
+makeNav("play", "เฝ้าบอส", 1, ASSETS.Overview)
 makeNav("rewards", "รางวัล / โค้ด", 2, ASSETS.Rewards)
 makeNav("farm", "ฟาร์ม / เควสต์", 3, ASSETS.Farm)
 makeNav("boss", "บอส 10 นาที", 4, ASSETS.Boss)
@@ -627,7 +636,7 @@ do
 	hero.Name = "Control"
 	director.ui.title = new("TextLabel", {
 		Position = UDim2.fromOffset(14, 10), Size = UDim2.new(1, -28, 0, 28),
-		BackgroundTransparency = 1, Text = "พร้อมเริ่มฟาร์ม", TextSize = 20,
+		BackgroundTransparency = 1, Text = "พร้อมเฝ้าบอส", TextSize = 20,
 		TextColor3 = COLORS.Text, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
 	}, hero)
 	director.ui.detail = new("TextLabel", {
@@ -638,24 +647,18 @@ do
 	}, hero)
 	director.ui.start = new("TextButton", {
 		Name = "StartStop", Position = UDim2.fromOffset(14, 98), Size = UDim2.new(0.64, -20, 0, 36),
-		BackgroundColor3 = COLORS.Green, BorderSizePixel = 0, Text = "เริ่มฟาร์มอัตโนมัติ",
+		BackgroundColor3 = COLORS.Green, BorderSizePixel = 0, Text = "เริ่มเฝ้าบอส",
 		TextSize = 15, TextColor3 = COLORS.Bg, Font = Enum.Font.GothamBold, AutoButtonColor = false,
 	}, hero)
 	corner(director.ui.start, 7)
 	local rescan = new("TextButton", {
 		Name = "Rescan", Position = UDim2.new(0.64, 2, 0, 98), Size = UDim2.new(0.36, -16, 0, 36),
-		BackgroundColor3 = COLORS.Card2, BorderSizePixel = 0, Text = "หาเป้าหมายใหม่",
+		BackgroundColor3 = COLORS.Card2, BorderSizePixel = 0, Text = "จำจุดฟาร์มนี้",
 		TextSize = 13, TextColor3 = COLORS.Text, Font = Enum.Font.GothamMedium,
 	}, hero)
 	corner(rescan, 7)
 	track(director.ui.start.MouseButton1Click:Connect(function() director:SetEnabled(not director.enabled) end))
-	track(rescan.MouseButton1Click:Connect(function()
-		director.plan = nil
-		director.blockedZones = {}
-		director.cooldowns = {}
-		director.navToken += 1
-		if not director.enabled then director:Preview() end
-	end))
+	track(rescan.MouseButton1Click:Connect(function() director:SaveHome() end))
 	local function option(title, key)
 		local row = makeCard(playPage, 40)
 		row.Name = key .. "Row"
@@ -675,13 +678,19 @@ do
 			button.BackgroundColor3 = director[key] and COLORS.Green or COLORS.Card2
 			button.TextColor3 = director[key] and COLORS.Bg or COLORS.Sub
 		end
-		track(button.MouseButton1Click:Connect(function() director[key] = not director[key]; refresh() end))
+		track(button.MouseButton1Click:Connect(function()
+			if key == "hopMode" and director.enabled then toast("หยุดเฝ้าบอสก่อนเปลี่ยนโหมด", "info"); return end
+			director[key] = not director[key]; refresh()
+		end))
+		table.insert(refreshers, refresh)
 		refresh()
 	end
 	option("แวะล่าบอสเมื่อเกิด แล้วกลับมาฟาร์ม", "huntBosses")
 	option("ลงดันเมื่อเลเวลผ่านและมีรอบฟรี", "runDungeons")
+	option("กลับเมืองขาย Junk แล้วกลับจุดเดิม", "sellTrip")
+	option("ล่าบอสข้ามเซิร์ฟ (สูงสุด 10 ครั้ง/รอบ)", "hopMode")
 	option("ใส่อุปกรณ์ที่ CP สูงสุดอัตโนมัติ", "equipBest")
-	local info = makeCard(playPage, 112)
+	local info = makeCard(playPage, 164)
 	info.Name = "Telemetry"
 	director.ui.stats = new("TextLabel", {
 		Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 24),
@@ -689,7 +698,7 @@ do
 		TextColor3 = COLORS.Cyan, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left,
 	}, info)
 	director.ui.note = new("TextLabel", {
-		Position = UDim2.fromOffset(14, 37), Size = UDim2.new(1, -28, 0, 66),
+		Position = UDim2.fromOffset(14, 37), Size = UDim2.new(1, -28, 0, 122),
 		BackgroundTransparency = 1, Text = "", TextSize = 12, TextWrapped = true,
 		TextColor3 = COLORS.Sub, Font = Enum.Font.Gotham,
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
@@ -860,7 +869,7 @@ makeToggle(farmPage, "Auto Farm", "เปิด/ปิดระบบต่อ�
 makeToggle(farmPage, "Auto Skill", "ใช้สกิล Archer ที่ตั้งไว้: Double Strafe, Arrow Shower, Piercing Shot", COLORS.Purple,
 	function() return player:GetAttribute("AutoSkill") == true end, function(v) setRemoteBoolean("SetAutoSkill", v) end)
 makeToggle(farmPage, "Auto Equip", "เลือกของจาก Combat Power อัตโนมัติ (อาจไม่ใช่สแตต Archer ที่สวยที่สุด)", COLORS.Blue,
-	function() return player:GetAttribute("AutoEquip") == true end, function(v) setRemoteBoolean("SetAutoEquip", v) end)
+	function() return director.equipBest end, function(v) director.equipBest = v; director:ApplyEquip() end)
 makeToggle(farmPage, "Auto Build: Balanced", "อัปค่าสเตตัสสมดุลอัตโนมัติ; ปิดแล้วกลับเป็น Manual", COLORS.Orange,
 	function() return player:GetAttribute("AutoBuild") == "balance" end, setBalanced)
 makeToggle(farmPage, "Smart Quest Planner", "รับ Daily ที่ยังไม่เสร็จและเลือก Repeat Quest ที่ให้ EXP/Gold ต่อเป้าหมายดีที่สุด", COLORS.Blue,
@@ -925,6 +934,7 @@ local bosses = {
 	{id = "bigboss_volcano_turtle_king", map = "Boss05", name = "Volcano Turtle King", zone = "Volcano"},
 }
 local bossLabels = {}
+local bossChoices = {}
 
 local bossIntro = makeCard(bossPage, 87, Color3.fromRGB(34, 31, 53))
 titleLabel(bossIntro, "BOSS RADAR", "บอสทุกตัวตั้ง Respawn 600 วินาที (10 นาที) • แจ้งเตือนเมื่อบอสกลับมาเกิด แต่จะไม่วาร์ปฝืนประตูเลเวล")
@@ -932,7 +942,8 @@ makeToggle(bossPage, "แจ้งเตือนบอสเกิด", "เต
 	function() return state.bossAlerts end, function(v) state.bossAlerts = v end)
 
 for index, boss in ipairs(bosses) do
-	local card = makeCard(bossPage, 67)
+	local card = makeCard(bossPage, 102)
+	card.Name = boss.map
 	new("TextLabel", {
 		Position = UDim2.fromOffset(15, 10), Size = UDim2.new(1, -145, 0, 22),
 		BackgroundTransparency = 1, Text = boss.name, TextColor3 = COLORS.Text,
@@ -949,6 +960,18 @@ for index, boss in ipairs(bosses) do
 		TextColor3 = COLORS.Sub, TextSize = 10, Font = Enum.Font.GothamBold,
 	}, card)
 	corner(status, 14)
+	local choose = new("TextButton", {
+		Name = "Select", Position = UDim2.fromOffset(15, 66), Size = UDim2.new(1, -30, 0, 27),
+		Text = "เลือกบอสตัวนี้", TextSize = 13, Font = Enum.Font.GothamBold,
+		TextColor3 = COLORS.Text, BackgroundColor3 = COLORS.Card2, BorderSizePixel = 0,
+	}, card)
+	corner(choose, 7)
+	bossChoices[boss.id] = choose
+	track(choose.MouseButton1Click:Connect(function()
+		if director.enabled then toast("หยุดเฝ้าบอสก่อนเปลี่ยนเป้าหมาย", "info"); return end
+		director.selectedBoss = boss.id
+		director:Preview()
+	end))
 	bossLabels[boss.id] = {label = status, wasAlive = workspace:GetAttribute("BossAlive_" .. boss.id) == true, boss = boss}
 end
 
@@ -1269,8 +1292,8 @@ local function nearMerchant()
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if not root then return false end
 	local candidates = {}
-	for _, object in ipairs(workspace:GetDescendants()) do
-		if object:IsA("Model") and (string.find(string.lower(object.Name), "merchant", 1, true) or object:GetAttribute("NpcId") == "merchant") then
+	for _, object in ipairs(workspace:QueryDescendants('#merchant, #Merchant, Model[$NpcId = "merchant"]')) do
+		if object:IsA("Model") then
 			table.insert(candidates, object)
 		end
 	end
@@ -1532,6 +1555,10 @@ do
 		return character and character:FindFirstChild("HumanoidRootPart"), character and character:FindFirstChildOfClass("Humanoid")
 	end
 
+	function director:SetNativeAuto(value)
+		setAutoFarm(value)
+	end
+
 	function director:TotalExp(level, progress)
 		local total = tonumber(progress) or 0
 		for previous = 1, math.max(1, tonumber(level) or 1) - 1 do
@@ -1637,7 +1664,11 @@ do
 	function director:HandleDungeon(data)
 		if not (state.autoDungeon or (self.enabled and self.runDungeons)) then return end
 		local definition, reason = self:ChooseDungeon(data, tonumber(player:GetAttribute("Level")) or 1)
-		if not definition then state.dungeonStatus = reason; self.dungeonTrip = false; self.lastDungeonAttempt = os.clock(); return end
+		if not definition then
+			state.dungeonStatus = reason; self.dungeonTrip = false; self.lastDungeonAttempt = os.clock()
+			if self.session and self.session.kind == "dungeon" then self:BeginReturn(reason) end
+			return
+		end
 		if os.clock() - (self.lastDungeonRequest or -100) < 20 then return end
 		self.lastDungeonRequest, self.dungeonRequested = os.clock(), definition.Id
 		self.dungeonTrip, self.dungeonEntering = false, os.clock() + 25
@@ -1668,7 +1699,8 @@ do
 		if not root then return true end
 		if (root.Position - torso.Position).Magnitude > math.max(3, prompt.MaxActivationDistance - 1) then
 			self.phase, self.detail = "กำลังไปหน้าดัน", "เดินไปคุย GateKeeper เพื่อตรวจรอบฟรีจริง"
-			self:Walk(torso.Position)
+			self:Walk(torso.Position, math.max(3, prompt.MaxActivationDistance - 1))
+			if self.navError then self.dungeonTrip = false; state.dungeonStatus = "เดินไป GateKeeper ไม่ถึง"; return false end
 			return true
 		end
 		self.phase, self.detail = "กำลังตรวจสิทธิ์ลงดัน", "รอข้อมูลจาก NPC • ถ้ารอบฟรีหมดจะกลับไปฟาร์ม"
@@ -1682,6 +1714,7 @@ do
 		elseif os.clock() - self.promptFiredAt > 12 then
 			self.dungeonTrip = false
 			self.phase, self.detail = "กลับไปฟาร์ม", "NPC ไม่ส่งรายการดัน กลับไปฟาร์มและลองใหม่ภายหลัง"
+			state.dungeonStatus = self.detail
 		end
 		return self.dungeonTrip
 	end
@@ -1689,108 +1722,85 @@ do
 	if dungeonPrompt then
 		track(dungeonPrompt.OnClientEvent:Connect(function(action, data)
 			if action ~= "ready" or type(data) ~= "table" or type(data.Id) ~= "string" then return end
-			if not director.enabled or not director.runDungeons or not director.dungeonRequested then return end
+			if not (state.autoDungeon or (director.enabled and director.runDungeons)) or not director.dungeonRequested then return end
 			if os.clock() - (director.lastDungeonRequest or 0) > 20 then return end
 			director.dungeonRequested = nil
 			if remote("DungeonAction") then remote("DungeonAction"):FireServer("ready", data.Id, true) end
 		end))
 	end
 
+	function director:SelectedDefinition()
+		for _, boss in ipairs(bosses) do if boss.id == self.selectedBoss then return boss end end
+	end
+
 	function director:SelectPlan()
-		local root, humanoid = self:Character()
-		local level = tonumber(player:GetAttribute("Level")) or 1
-		local now = os.clock()
-		if self.huntBosses and humanoid then
-			for index = #bosses, 1, -1 do
-				local boss = bosses[index]
-				local definition = MonsterData[boss.id] or {}
-				local model = self:Monster(boss.id)
-				local spawnKey = model and model:GetAttribute("SpawnAt") or self.bossSpawnKeys[boss.id] or workspace:GetAttribute("BossNext_" .. boss.id)
-				self.bossSpawnKeys[boss.id] = spawnKey
-				local healthy = humanoid.Health / math.max(1, humanoid.MaxHealth) >= 0.7
-				local alreadyFighting = self.plan and self.plan.boss and self.plan.id == boss.id
-				if (healthy or alreadyFighting) and (definition.Level or math.huge) <= level and self:CanAccess(boss.map) and self:ZonePart(boss.map)
-					and workspace:GetAttribute("BossAlive_" .. boss.id) == true and (self.cooldowns[boss.id] or 0) <= now
-					and (not spawnKey or self.failedBossSpawns[boss.id] ~= spawnKey) then
-					return {id = boss.id, zone = boss.map, name = boss.name, level = definition.Level, boss = true, model = model, spawnKey = spawnKey}
-				end
-			end
-		end
-		local choice, bestDistance
-		local folder = workspace:FindFirstChild("Monsters")
-		local cap = math.min(level, self.levelCap or level)
-		for _, model in ipairs(folder and folder:GetChildren() or {}) do
-			local id = model:GetAttribute("MonsterId")
-			local definition = id and MonsterData[id]
-			local zone = id and spawnZones[id]
-			local hp = tonumber(model:GetAttribute("HP")) or 0
-			local rank = definition and tonumber(definition.Level)
-			if model:IsA("Model") and model.PrimaryPart and definition and zone and rank and rank <= cap and hp > 0
-				and not definition.Boss and not definition.MiniBoss and not string.find(id, "boss", 1, true)
-				and (self.cooldowns[id] or 0) <= now and self:CanAccess(zone) then
-				local distance = root and (root.Position - model.PrimaryPart.Position).Magnitude or 0
-				if not choice or rank > choice.level or (rank == choice.level and distance < bestDistance) then
-					choice = {id = id, zone = zone, name = definition.Name or id, level = rank, model = model, boss = false}
-					bestDistance = distance
-				end
-			end
-		end
-		-- Keep fighting the current living monster instead of switching every tick.
-		local current = self.plan
-		if choice and current and not current.boss and current.model and current.model.Parent
-			and (current.model:GetAttribute("HP") or 0) > 0 and current.level >= choice.level
-			and (self.cooldowns[current.id] or 0) <= now and self:CanAccess(current.zone) then return current end
-		return choice
+		if not self.huntBosses then return nil end
+		local boss = self:SelectedDefinition()
+		if not boss then return nil end
+		local definition = MonsterData[boss.id] or {}
+		local _, humanoid = self:Character()
+		if not humanoid or humanoid.Health / math.max(1, humanoid.MaxHealth) < 0.7 then return nil end
+		if (definition.Level or math.huge) > (player:GetAttribute("Level") or 1) or not self:CanAccess(boss.map) then return nil end
+		if workspace:GetAttribute("BossAlive_" .. boss.id) ~= true then return nil end
+		local model = self:Monster(boss.id)
+		local spawnKey = model and model:GetAttribute("SpawnAt") or self.bossSpawnKeys[boss.id] or "alive"
+		self.bossSpawnKeys[boss.id] = spawnKey
+		if (self.cooldowns[boss.id] or 0) > os.clock() or self.failedBossSpawns[boss.id] == spawnKey then return nil end
+		return {id = boss.id, zone = boss.map, name = boss.name, level = definition.Level, boss = true, model = model, spawnKey = spawnKey}
 	end
 
 	function director:CancelNavigation()
 		self.navToken += 1
-		self.navBusy, self.waypoints, self.navGoal = false, nil, nil
+		self.navBusy, self.navGoal, self.navError = false, nil, nil
 	end
 
-	function director:Walk(goal)
+	-- A single worker advances waypoints every frame, independently of the UI tick.
+	-- Repeated Walk calls for the same goal do not restart a path.
+	function director:Walk(goal, tolerance)
+		tolerance = tolerance or 7
 		local root, humanoid = self:Character()
 		if not root or not humanoid then return false end
-		if (root.Position - goal).Magnitude < 10 then return true end
-		local now = os.clock()
-		if not self.navProgress or (root.Position - self.navProgress).Magnitude > 2 then
-			self.navProgress, self.navProgressAt = root.Position, now
-		elseif now - (self.navProgressAt or now) > 9 then
-			if self.plan then self.blockedZones[self.plan.zone] = now + 45; self.cooldowns[self.plan.id] = now + 45 end
-			self.plan = nil
-			self:CancelNavigation()
-			self.navProgressAt = now
-			self.phase, self.detail = "เส้นทางติดขัด", "พักเส้นทางนี้ 45 วินาที แล้วหาเป้าหมายใหม่"
-			return false
+		if (root.Position - goal).Magnitude <= tolerance then
+			if self.navBusy then self:CancelNavigation(); humanoid:MoveTo(root.Position) end
+			return true
 		end
-		if self.waypoints and self.navGoal and (self.navGoal - goal).Magnitude < 16 then
-			local point = self.waypoints[self.waypointIndex]
-			while point and (root.Position - point.Position).Magnitude < 5 do
-				self.waypointIndex += 1
-				point = self.waypoints[self.waypointIndex]
-			end
-			if point then
-				if point.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
-				humanoid:MoveTo(point.Position)
-				return false
-			end
-			self.waypoints = nil
-		end
-		if self.navBusy or now - (self.lastPathAt or 0) < 1.5 then return false end
-		self.lastPathAt, self.navBusy, self.navGoal = now, true, goal
+		if self.navError then return false end
+		if self.navBusy and self.navGoal and (self.navGoal - goal).Magnitude < 4 then return false end
+		self:CancelNavigation()
+		self.navBusy, self.navGoal = true, goal
 		local token = self.navToken
 		task.spawn(function()
-			local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 5})
-			local ok = pcall(path.ComputeAsync, path, root.Position, goal)
-			if token ~= self.navToken or not (self.enabled or self.travel.active) then return end
-			self.navBusy = false
-			if ok and path.Status == Enum.PathStatus.Success then
-				self.waypoints, self.waypointIndex = path:GetWaypoints(), 2
-			else
-				-- A normal MoveTo can cross small stair segments that pathfinding misses.
-				-- Lack of progress is caught above; no teleports or collision changes.
-				humanoid:MoveTo(goal)
+			local function active()
+				return runtime.alive and token == self.navToken and (self.enabled or self.travel.active)
+					and root.Parent and humanoid.Health > 0
 			end
+			local ok, message = pcall(function()
+				local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 7})
+				local computed = pcall(path.ComputeAsync, path, root.Position, goal)
+				if not active() then return end
+				local points = computed and path.Status == Enum.PathStatus.Success and path:GetWaypoints()
+					or {{Position = goal, Action = Enum.PathWaypointAction.Walk}}
+				local progress, progressAt = root.Position, os.clock()
+				for index, point in ipairs(points) do
+					if not active() then return end
+					if (root.Position - goal).Magnitude <= tolerance then break end
+					local radius = index == #points and tolerance or 4
+					if (root.Position - point.Position).Magnitude <= radius then continue end
+					if point.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
+					humanoid:MoveTo(point.Position)
+					local sentAt = os.clock()
+					while active() and (root.Position - point.Position).Magnitude > radius do
+						if (root.Position - goal).Magnitude <= tolerance then break end
+						if (root.Position - progress).Magnitude > 1 then progress, progressAt = root.Position, os.clock() end
+						if os.clock() - progressAt > 8 then error("เส้นทางติดขัด เดินต่อไม่ได้") end
+						if os.clock() - sentAt > 5 then humanoid:MoveTo(point.Position); sentAt = os.clock() end
+						RunService.Heartbeat:Wait()
+					end
+				end
+			end)
+			if token ~= self.navToken then return end
+			self.navBusy = false
+			if not ok then self.navError = tostring(message) end
 		end)
 		return false
 	end
@@ -1826,26 +1836,52 @@ do
 		return false
 	end
 
-	function director:TravelRoute(id, returnPosition)
-		local root = self:Character()
+	function director:PillarPosition(id)
 		local map = workspace:FindFirstChild("Map")
 		local pillars = map and map:FindFirstChild("WarpPillars")
+		local model = pillars and pillars:FindFirstChild("WarpPillar_" .. tostring(id))
+		if not model then return nil end
+		local column = model:FindFirstChild("Column")
+		-- Streamed-out models retain their pivot even when Column is absent.
+		return column and column.Position or model:GetPivot().Position
+	end
+
+	function director:NearestPillar(position)
+		local map = workspace:FindFirstChild("Map")
+		local pillars = map and map:FindFirstChild("WarpPillars")
+		local source, distance
+		for _, model in ipairs(pillars and pillars:GetChildren() or {}) do
+			local column = model:FindFirstChild("Column")
+			local prompt = column and column:FindFirstChild("WarpPrompt")
+			if column and prompt and prompt.Enabled then
+				local d = (column.Position - position).Magnitude
+				if not distance or d < distance then source, distance = column, d end
+			end
+		end
+		return source, distance
+	end
+
+	function director:TravelRoute(id, returnPosition, fromPosition)
+		local root = fromPosition and {Position = fromPosition} or self:Character()
 		local zone = self:ZonePart(id)
 		local goal = returnPosition or (zone and zone.Position)
 		local direct = (id == "Town" or (MapData[id] and MapData[id].BossRoom)) and id or nil
-		if direct and self:PillarAvailable(direct) then return direct, direct == "Town" and 0 or (tonumber(direct:match("%d+")) or 0) * 1000 end
-		if not root or not goal or not pillars then return nil, 0 end
-		local sourceDistance = math.huge
-		for _, model in ipairs(pillars:GetChildren()) do
-			local column = model:FindFirstChild("Column")
-			if column then sourceDistance = math.min(sourceDistance, (column.Position - root.Position).Magnitude) end
+		if direct and self:PillarAvailable(direct) then
+			local at = self:PillarPosition(direct)
+			if root and at and (root.Position - at).Magnitude <= 35 then return nil, 0 end
+			local source = root and self:NearestPillar(root.Position)
+			if source and source.Parent:GetAttribute("WarpId") == direct then return nil, 0 end
+			return direct, direct == "Town" and 0 or (tonumber(direct:match("%d+")) or 0) * 1000
 		end
+		if not root or not goal then return nil, 0 end
+		local _, sourceDistance = self:NearestPillar(root.Position)
+		if not sourceDistance then return nil, 0 end
 		local best, bestDistance = nil, (root.Position - goal).Magnitude - 90
-		for _, model in ipairs(pillars:GetChildren()) do
-			local pillarId, column = model:GetAttribute("WarpId"), model:FindFirstChild("Column")
-			if column and type(pillarId) == "string" and self:PillarAvailable(pillarId) and (pillarId == "Town" or self:CanAccess(pillarId)) then
-				local distance = sourceDistance + (column.Position - goal).Magnitude
-				if distance < bestDistance then best, bestDistance = pillarId, distance end
+		for _, candidate in ipairs({"Town", "Boss01", "Boss02", "Boss03", "Boss04", "Boss05"}) do
+			local at = self:PillarPosition(candidate)
+			if at and self:PillarAvailable(candidate) and (candidate == "Town" or self:CanAccess(candidate)) then
+				local distance = sourceDistance + (at - goal).Magnitude
+				if distance < bestDistance then best, bestDistance = candidate, distance end
 			end
 		end
 		return best, best and best ~= "Town" and (tonumber(best:match("%d+")) or 0) * 1000 or 0
@@ -1853,7 +1889,7 @@ do
 
 	function director:CancelTrip()
 		self.travel.token += 1
-		self.travel.active = false
+		self.travel.active, self.travel.completed = false, false
 		self:CancelNavigation()
 		local root, humanoid = self:Character()
 		if root and humanoid then humanoid:MoveTo(root.Position) end
@@ -1865,104 +1901,154 @@ do
 		self:TravelTo(self.travel.bookmark.zone, self.travel.bookmark.position, true)
 	end
 
-	function director:TravelTo(id, returnPosition, returning)
+	function director:TravelTo(id, returnPosition, returning, internal)
+		local travel = self.travel
+		travel.completed, travel.lastError = false, nil
 		local allowed, reason = true, nil
 		if id ~= "Town" then allowed, reason = self:CanAccess(id) end
-		if not allowed then self.travel.status = "ไปไม่ได้: " .. tostring(reason); return end
+		if not allowed then travel.status = "ไปไม่ได้: " .. tostring(reason); return false end
 		local pillarId, cost = self:TravelRoute(id, returnPosition)
-		if cost > 0 and self:PillarAvailable(pillarId) then
-			if (tonumber(player:GetAttribute("Silver")) or 0) < cost then self.travel.status = "Silver ไม่พอ: วาร์ปนี้ใช้ " .. comma(cost); return end
-		end
+		if (tonumber(player:GetAttribute("Silver")) or 0) < cost then travel.status = "Silver ไม่พอ: วาร์ปนี้ใช้ " .. comma(cost); return false end
 		local root = self:Character()
-		if not root then self.travel.status = "รอตัวละครเกิดก่อน"; return end
-		if workspace:GetAttribute("DungeonId") ~= nil then self.travel.status = "ใช้ปุ่มออกดันของเกมก่อนเดินทาง"; return end
-		if self.enabled then self:SetEnabled(false) else setAutoFarm(false) end
+		if not root then travel.status = "รอตัวละครเกิดก่อน"; return false end
+		if workspace:GetAttribute("DungeonId") ~= nil then travel.status = "ใช้ปุ่มออกดันของเกมก่อนเดินทาง"; return false end
+		local nativeWasOn = player:GetAttribute("AutoOn") == true
+		if not internal and self.enabled then self:SetEnabled(false) end
 		self:CancelTrip()
-		if not returning then self.travel.bookmark = {zone = self:CurrentZone(), position = root.Position} end
-		local travel = self.travel
+		if not returning and not internal then travel.bookmark = {zone = self:CurrentZone(), position = root.Position, auto = nativeWasOn} end
 		travel.active, travel.status = true, "เตรียมเดินทางไป " .. id
-		local token, deadline = travel.token, os.clock() + 150
-		self.navProgress, self.plan = nil, nil
+		local token, deadline = travel.token, os.clock() + 180
 		task.spawn(function()
+			local function alive() return runtime.alive and travel.active and travel.token == token and os.clock() < deadline end
 			local ok, message = xpcall(function()
-				local map = workspace:FindFirstChild("Map")
-				local pillars = map and map:FindFirstChild("WarpPillars")
-				local pillarModel = pillars and pillarId and pillars:FindFirstChild("WarpPillar_" .. pillarId)
-				local destination = pillarModel and pillarModel:FindFirstChild("Column")
-				local function alive() return runtime.alive and travel.active and travel.token == token and os.clock() < deadline end
+				setAutoFarm(false)
+				local pauseDeadline = os.clock() + 4
+				while alive() and player:GetAttribute("AutoOn") == true and os.clock() < pauseDeadline do setAutoFarm(false); task.wait(0.1) end
+				if player:GetAttribute("AutoOn") == true then error("ปิด Auto ของเกมก่อนเดินทางไม่สำเร็จ") end
 				local function moveTo(goal, label, tolerance)
 					self:CancelNavigation()
-					self.navProgress = nil
 					while alive() do
 						local current, humanoid = self:Character()
 						if not current or not humanoid or humanoid.Health <= 0 then error("ตัวละครเสียชีวิตระหว่างเดินทาง") end
-						if (current.Position - goal).Magnitude <= (tolerance or 9) then return true end
+						if self.navError then error(self.navError) end
 						travel.status = label .. string.format(" • %.0f studs", (current.Position - goal).Magnitude)
-						self:Walk(goal)
-						task.wait(0.35)
+						if self:Walk(goal, tolerance or 7) then return true end
+						task.wait(0.1)
 					end
 					return false
 				end
-				if destination and self:PillarAvailable(pillarId) and (root.Position - destination.Position).Magnitude > 35 then
-					local source, nearest
-					for _, model in ipairs(pillars:GetChildren()) do
-						local pillar = model:FindFirstChild("Column")
-						if pillar and pillar:IsA("BasePart") then
-							local distance = (pillar.Position - root.Position).Magnitude
-							if not nearest or distance < nearest then source, nearest = pillar, distance end
-						end
-					end
-					if not source then error("ไม่พบเสาวาร์ปต้นทาง") end
-					if not moveTo(source.Position + Vector3.new(0, 0, 7), "กำลังเดินไปเสาวาร์ป", 9) then return end
+				if pillarId then
+					local current = self:Character()
+					local source = current and self:NearestPillar(current.Position)
+					if not source then error("ไม่พบเสาต้นทางที่โหลดอยู่ ลองเดินเข้าใกล้เสา") end
 					local prompt = source:FindFirstChild("WarpPrompt")
-					if prompt then
-						local fire = rawget(env, "fireproximityprompt")
-						if type(fire) == "function" then fire(prompt) else prompt:InputHoldBegin(); task.wait(prompt.HoldDuration + 0.1); prompt:InputHoldEnd() end
-						task.wait(0.5)
+					local range = math.max(3, math.min(6, prompt.MaxActivationDistance - 2))
+					-- Check actual prompt distance, rather than distance to an offset waypoint.
+					if not moveTo(source.Position, "กำลังไปเสาวาร์ปต้นทาง", range) then return end
+					self:CancelNavigation()
+					local openedAt = os.clock()
+					local fire = rawget(env, "fireproximityprompt")
+					if type(fire) == "function" then fire(prompt) else
+						prompt:InputHoldBegin(); task.wait(prompt.HoldDuration + 0.1); prompt:InputHoldEnd()
 					end
+					local openDeadline = os.clock() + 6
+					while alive() and (self.lastPillarOpenAt or 0) < openedAt and os.clock() < openDeadline do task.wait(0.1) end
 					if not alive() then return end
+					if (self.lastPillarOpenAt or 0) < openedAt then error("เสายังไม่ตอบรับ กดเปิดเมนูเสาแล้วลองอีกครั้ง") end
 					local event = remote("PillarWarp")
 					if not event then error("ไม่พบ PillarWarp ของเกม") end
-					self:CancelNavigation()
-					travel.status = "ส่งคำขอวาร์ปไป " .. id .. " • รอเซิร์ฟเวอร์"
+					travel.status = "รอเซิร์ฟเวอร์วาร์ปไป " .. pillarId
 					event:FireServer(pillarId)
-					local responseDeadline = os.clock() + 10
-					local arrived = false
+					local responseDeadline, arrived = os.clock() + 15, false
 					while alive() and os.clock() < responseDeadline do
-						local current = self:Character()
-						if current and (current.Position - destination.Position).Magnitude < 65 then arrived = true; break end
-						task.wait(0.25)
+						local at = self:PillarPosition(pillarId)
+						local here = self:Character()
+						if at and here and (here.Position - at).Magnitude < 65 then arrived = true; break end
+						task.wait(0.1)
 					end
-					if not arrived then error("เซิร์ฟเวอร์ไม่ยืนยันวาร์ป (ตรวจเสาที่ปลดล็อก/Silver/ระยะ)") end
+					if not alive() then return end
+					if not arrived then error("เซิร์ฟเวอร์ไม่ยืนยันวาร์ป ตรวจสิทธิ์เสาและ Silver") end
 				end
+				if not alive() then return end
 				local zone = self:ZonePart(id)
-				local goal = returnPosition or (destination and destination.Position + Vector3.new(0, 0, 7)) or (zone and zone.Position + Vector3.new(0, 3, 0))
-				if not goal then error("โซนยังไม่โหลดหรือไม่มีเสาวาร์ป") end
-				if not moveTo(goal, returning and "กำลังกลับจุดเดิม" or "กำลังไปจุดหมาย", 10) then return end
-				travel.status = returning and "กลับถึงจุดเดิมแล้ว" or ("ถึง " .. id .. " แล้ว • กดเริ่มเพื่อฟาร์ม")
+				local pillar = self:PillarPosition(id)
+				local bossEntry = internal and MapData[id] and MapData[id].BossRoom and zone
+				local goal = returnPosition or (bossEntry and bossEntry.Position + Vector3.new(0, 3, 0))
+					or (pillar and pillar + Vector3.new(0, 3, 7)) or (zone and zone.Position + Vector3.new(0, 3, 0))
+				if not goal then error("ยังไม่มีพิกัดด่านนี้ ลองวาร์ปไปเสาใกล้ด่านก่อน") end
+				if not moveTo(goal, returning and "กำลังกลับจุดเดิม" or "กำลังไปจุดหมาย", 7) then return end
+				travel.completed = true
+				travel.status = returning and "กลับถึงจุดเดิมแล้ว" or ("ถึง " .. id .. " แล้ว")
 				travel.lastArrival = {id = id, returning = returning == true, at = os.clock()}
+				if returning and not internal and travel.bookmark and travel.bookmark.auto then setAutoFarm(true) end
 			end, debug.traceback)
 			if travel.token ~= token then return end
-			if not ok then travel.status, travel.lastError = "เดินทางไม่สำเร็จ: " .. tostring(message):match("[^\n]+"), tostring(message) end
-			if os.clock() >= deadline then travel.status = "เดินทางหมดเวลา ลองเลือกจุดใกล้ขึ้น" end
+			if not ok then travel.lastError = tostring(message); travel.status = "เดินทางไม่สำเร็จ: " .. displayError(message) end
+			if os.clock() >= deadline then travel.status = "เดินทางหมดเวลา"; travel.completed = false end
 			travel.active = false
 			self:CancelNavigation()
 		end)
+		return true
+	end
+
+	local pillarOpen = remote("PillarOpen")
+	if pillarOpen then track(pillarOpen.OnClientEvent:Connect(function(id)
+		director.lastPillarOpenAt, director.lastPillarId = os.clock(), id
+	end)) end
+
+	function director:BuildTargetExclusions(id, priority, definitions)
+		local candidates, preferred = {}, 0
+		for monsterId, definition in pairs(definitions or MonsterData) do
+			if type(definition) == "table" and monsterId ~= id then
+				if priority[monsterId] then preferred += 1 end
+				table.insert(candidates, monsterId)
+			end
+		end
+		if preferred > 100 then return nil end
+		table.sort(candidates, function(a, b)
+			if (priority[a] == true) ~= (priority[b] == true) then return priority[a] == true end
+			return a < b
+		end)
+		local excludes = {}
+		for index = 1, math.min(100, #candidates) do excludes[candidates[index]] = true end
+		return excludes
 	end
 
 	function director:ConfigureTarget(id)
 		if self.configuredId == id then return true end
 		local settings = decodeAttribute("BotJson")
-		local excludes = {}
-		for monsterId, definition in pairs(MonsterData) do if type(definition) == "table" and monsterId ~= id then excludes[monsterId] = true end end
+		local priority, root = {}, self:Character()
+		local zone = MapData[spawnZones[id]]
+		for _, node in ipairs(nodes) do
+			if zone and math.abs(node.data.Order - zone.Order) <= 2 then
+				for _, spawn in ipairs(node.data.Spawns or {}) do priority[spawn.Id] = true end
+			end
+		end
+		local folder = workspace:FindFirstChild("Monsters")
+		for _, model in ipairs(folder and folder:GetChildren() or {}) do
+			local monsterId = model:GetAttribute("MonsterId")
+			if monsterId and model.PrimaryPart and root and (model.PrimaryPart.Position - root.Position).Magnitude < 300 then priority[monsterId] = true end
+		end
+		-- The server retains only 100 exclusions. Prioritize everything in/near
+		-- this room, then fill remaining slots deterministically with distant IDs.
+		local excludes = self:BuildTargetExclusions(id, priority)
+		if not excludes then self.detail = "ตัวกรองมอนสเตอร์ใกล้ตัวเกินขีดจำกัดของเกม"; return false end
 		settings.Exclude, settings.Only = excludes, {}
 		settings.Mode, settings.Preset = "fight", "normal"
 		settings.AttackLeader, settings.NormalAttack, settings.UseSkills = true, true, true
-		settings.FixedArea, settings.Loot = false, true
+		settings.FixedArea, settings.Range, settings.Radius, settings.Loot = true, 60, 60, true
 		local event = remote("SetBotSettings")
 		if not event then self.phase, self.detail = "หยุด: ตั้งเป้าหมายไม่ได้", "ไม่พบ SetBotSettings"; return false end
 		event:FireServer(settings)
-		self.configuredId, self.settingsSentAt = id, os.clock()
+		self.configuredId, self.settingsSentAt, self.sentExcludes = id, os.clock(), excludes
+		return true
+	end
+
+	function director:SameSettings(a, b)
+		if type(a) ~= type(b) then return false end
+		if type(a) ~= "table" then return a == b end
+		for key, value in pairs(a) do if not self:SameSettings(value, b[key]) then return false end end
+		for key in pairs(b) do if a[key] == nil then return false end end
 		return true
 	end
 
@@ -1984,156 +2070,363 @@ do
 		end)
 	end
 
+	function director:SaveHome()
+		if self.session or self.travel.active then toast("รอให้กลับจากทริปก่อนเปลี่ยนจุดฟาร์ม", "info"); return false end
+		local root = self:Character()
+		if not root then return false end
+		self.home = {zone = self:CurrentZone(), position = root.Position}
+		self.travel.bookmark = self.home
+		self.homeBot, self.homeAuto = decodeAttribute("BotJson"), player:GetAttribute("AutoOn") == true
+		toast("จำจุดฟาร์มนี้แล้ว", "good")
+		return true
+	end
+
 	function director:Preview()
-		local plan = self:SelectPlan()
-		self.preview = plan
-		self.phase = "พร้อมเริ่มฟาร์ม"
-		self.detail = plan and string.format("เป้าหมาย: %s Lv.%d • %s\nเลือกตัวเลเวลสูงสุดในโซนที่เข้าถึงได้", plan.name, plan.level, (MapData[plan.zone] or {}).DisplayName or plan.zone) or "ยังไม่พบมอนสเตอร์ในโซนที่เข้าถึงได้"
+		local boss = self:SelectedDefinition()
+		self.phase = "พร้อมเฝ้าบอส"
+		self.detail = (boss and ("บอสที่เลือก: " .. boss.name) or "เลือกบอสในหน้า บอส 10 นาที")
+			.. "\nยืนจุดฟาร์ม เปิด Auto ของเกม แล้วกดเริ่มเฝ้าบอส"
+	end
+
+	function director:RestoreSettings(session)
+		if not session or session.restored then return end
+		if session.botChanged and remote("SetBotSettings") then remote("SetBotSettings"):FireServer(session.bot) end
+		if session.skillChanged then setRemoteBoolean("SetAutoSkill", session.autoSkill) end
+		session.restored, session.restoreAt = true, os.clock()
 	end
 
 	function director:SetEnabled(value)
 		if value == self.enabled then return end
-		if value and self.travel.active then self:CancelTrip() end
-		self.enabled = value
-		self:CancelNavigation()
 		if value then
-			self.savedBot = decodeAttribute("BotJson")
-			self.savedAutoSkill = player:GetAttribute("AutoSkill") == true
-			self.startedAt, self.startExp, self.startSilver = os.clock(), tonumber(player:GetAttribute("Exp")) or 0, tonumber(player:GetAttribute("Silver")) or 0
-			self.startLevel = tonumber(player:GetAttribute("Level")) or 1
-			self.startTotalExp = self:TotalExp(self.startLevel, self.startExp)
-			self.kills, self.plan, self.configuredId, self.levelCap = 0, nil, nil, nil
-			self.navProgress, self.cooldowns, self.blockedZones = nil, {}, {}
-			self.resting, self.restGoal = false, nil
-			self.lastDecision, self.bossLootUntil, self.bossPotionStart = nil, nil, nil
-			state.autoClaim, state.autoQuestPlan, state.autoRewards, state.autoSellJunk = true, true, true, true
-			setRemoteBoolean("SetAutoSkill", true)
-			self.phase, self.detail = "กำลังหาเป้าหมาย", "กำลังตรวจเลเวล ประตู และมอนสเตอร์ที่ยังมีชีวิต"
+			if self.travel.active then self:CancelTrip() end
+			if not self:SaveHome() then return end
+			self.enabled, self.session = true, nil
+			self.hop = {visited = {}, count = 0, max = 10, nextAt = os.clock() + 20}
+			self.startedAt, self.startSilver = os.clock(), tonumber(player:GetAttribute("Silver")) or 0
+			self.startTotalExp = self:TotalExp(player:GetAttribute("Level"), player:GetAttribute("Exp"))
+			self.kills, self.plan, self.configuredId = 0, nil, nil
+			self.phase, self.detail = "กำลังเฝ้าบอส", "ให้ Auto ของเกมฟาร์มตามเดิม • จำจุดกลับแล้ว"
 		else
-			setAutoFarm(false)
-			local root, humanoid = self:Character()
-			if humanoid and root then humanoid:MoveTo(root.Position) end
-			local event = remote("SetBotSettings")
-			if event and self.savedBot then event:FireServer(self.savedBot) end
-			if self.savedAutoSkill ~= nil then setRemoteBoolean("SetAutoSkill", self.savedAutoSkill) end
-			if self.resting and remote("SitToggle") then remote("SitToggle"):FireServer(false) end
-			self.resting, self.plan, self.configuredId = false, nil, nil
+			self.enabled = false
+			self.hop.token = (self.hop.token or 0) + 1
+			self.hop.busy = false
+			if self.travel.active then self:CancelTrip() end
+			self:CancelNavigation()
+			local session = self.session
+			if session then
+				setAutoFarm(false)
+				self:RestoreSettings(session)
+				local root, humanoid = self:Character()
+				if root and humanoid then humanoid:MoveTo(root.Position) end
+			end
+			self.session, self.plan, self.configuredId = nil, nil, nil
 			self.dungeonTrip, self.dungeonEntering, self.dungeonRequested = false, nil, nil
-			state.autoClaim, state.autoQuestPlan, state.autoRewards, state.autoSellJunk = false, false, false, false
 			self:Watch(nil)
-			self.phase, self.detail = "หยุดแล้ว", "หยุดการเดินและต่อสู้อัตโนมัติแล้ว กดเริ่มเพื่อทำต่อ"
+			self.phase = "หยุดเฝ้าบอสแล้ว"
+			self.detail = session and "หยุดทริปแล้ว • กดกลับจุดเดิมได้ที่หน้า วาร์ป / กลับ" or "Auto ของเกมยังใช้ค่าที่คุณตั้งไว้"
 		end
 	end
 
+	function director:BeginSession(kind, plan)
+		local root = self:Character()
+		if not root or not self.home then return false end
+		local bot, native = decodeAttribute("BotJson"), player:GetAttribute("AutoOn") == true
+		if self.hopMode then bot, native = self.homeBot or bot, self.homeAuto == true end
+		self.session = {kind = kind, stage = "outbound", bot = bot, native = native,
+			autoSkill = player:GetAttribute("AutoSkill") == true, startedAt = os.clock()}
+		if kind == "dungeon" then self.promptFiredAt, self.dungeonEntering, self.dungeonRequested = nil, nil, nil end
+		self.travel.bookmark = {zone = self.home.zone, position = self.home.position, auto = native}
+		self.plan, self.configuredId = plan, nil
+		self.bossLootUntil, self.fightStarted = nil, nil
+		self.bossPotionStart = self:HealingSupply()
+		local id = plan and plan.zone or "Town"
+		if not self:TravelTo(id, nil, false, true) then
+			self.lastDecision = self.travel.status
+			self.session, self.plan = nil, nil
+			if plan then self.cooldowns[plan.id] = os.clock() + 60 end
+			return false
+		end
+		return true
+	end
+
+	function director:BeginReturn(reason)
+		local session = self.session
+		if not session then return end
+		self.lastDecision = reason
+		self:Watch(nil)
+		self:CancelNavigation()
+		self:SetNativeAuto(false)
+		self:RestoreSettings(session)
+		session.stage = "return"
+		self.plan, self.configuredId = nil, nil
+		if not self.home or not self:TravelTo(self.home.zone, self.home.position, true, true) then
+			self:SetEnabled(false)
+			self.detail = "กลับจุดเดิมไม่ได้: " .. self.travel.status
+		end
+	end
+
+	function director:FinishBoss(reason, killed)
+		local plan = self.plan
+		if plan then
+			self.failedBossSpawns[plan.id] = plan.spawnKey
+			self.cooldowns[plan.id] = os.clock() + 60
+		end
+		if killed and self.hopMode then
+			self.session.stage = "hop"
+			self.lastDecision = reason
+			self:SetNativeAuto(false)
+			self:RestoreSettings(self.session)
+			self:Watch(nil)
+			self.plan = nil
+			self.hop.nextAt = math.max(self.hop.nextAt or 0, os.clock() + 3)
+		else self:BeginReturn(reason) end
+	end
+
+	function director:PickServer(data, visited, current, now)
+		local candidates = {}
+		for _, server in ipairs(type(data) == "table" and data.data or {}) do
+			if type(server) == "table" and type(server.id) == "string" and server.id ~= current
+				and type(server.playing) == "number" and type(server.maxPlayers) == "number"
+				and server.playing < server.maxPlayers and (visited[server.id] or 0) <= now then
+				table.insert(candidates, server)
+			end
+		end
+		table.sort(candidates, function(x, y) return x.playing < y.playing end)
+		return candidates[1] and candidates[1].id
+	end
+
+	function director:QueueHop(target)
+		local queue = rawget(env, "queue_on_teleport") or rawget(env, "queueonteleport")
+		local syn = rawget(env, "syn")
+		if type(queue) ~= "function" and type(syn) == "table" then queue = syn.queue_on_teleport end
+		if type(queue) ~= "function" then error("ตัวรันไม่รองรับโหลดต่อหลังย้ายเซิร์ฟ") end
+		local home = self.home
+		local payload = {version = 1, user = player.UserId, place = game.PlaceId, target = target, at = os.time(),
+			selected = self.selectedBoss, count = self.hop.count + 1, max = self.hop.max, visited = self.hop.visited,
+			home = {zone = home.zone, x = home.position.X, y = home.position.Y, z = home.position.Z},
+			bot = self.homeBot, native = self.homeAuto, equip = self.equipBest}
+		local encoded = HttpService:JSONEncode(payload)
+		local code = string.format([=[
+if not game:IsLoaded() then game.Loaded:Wait() end
+local data = game:GetService("HttpService"):JSONDecode(%q)
+if game.PlaceId == data.place and game.JobId == data.target and os.time() - data.at < 600 then
+	getgenv().__DukeHTResume = data
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/maxwellisnothere/HTforV4LENTINE/main/loader.luau"))()
+end
+]=], encoded)
+		queue(code)
+	end
+
+	function director:HopServer()
+		local hop = self.hop
+		if hop.busy or os.clock() < hop.nextAt then return end
+		if hop.count >= hop.max then
+			self.hopMode = false
+			self.session = self.session or {kind = "hop", bot = self.homeBot or decodeAttribute("BotJson"),
+				native = self.homeAuto == true, autoSkill = player:GetAttribute("AutoSkill") == true}
+			self.session.stopAfterReturn = true
+			self:BeginReturn("ครบจำนวนย้ายเซิร์ฟ กลับจุดฟาร์ม")
+			return
+		end
+		hop.busy, hop.nextAt = true, os.clock() + 45
+		hop.token = (hop.token or 0) + 1
+		local token = hop.token
+		task.spawn(function()
+			local function active() return runtime.alive and self.enabled and self.hopMode and self.hop == hop and hop.token == token end
+			local ok, message = pcall(function()
+				local cursor, target
+				for _ = 1, 3 do
+					local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
+					if cursor then url ..= "&cursor=" .. HttpService:UrlEncode(cursor) end
+					local data = HttpService:JSONDecode(game:HttpGet(url))
+					if not active() then return end
+					target = self:PickServer(data, hop.visited, game.JobId, os.time())
+					if target then break end
+					cursor = data.nextPageCursor
+					if type(cursor) ~= "string" or cursor == "" then break end
+					task.wait(1)
+				end
+				if not target then error("ยังไม่มีเซิร์ฟใหม่ที่เข้าได้ พัก 60 วินาที") end
+				if not active() then return end
+				hop.visited[game.JobId], hop.visited[target] = os.time() + 1800, os.time() + 1800
+				self:QueueHop(target)
+				if not active() then return end
+				self.phase, self.detail = "กำลังย้ายเซิร์ฟ", "เข้าเซิร์ฟใหม่เพื่อตรวจบอสที่เลือก"
+				hop.pending, hop.pendingAt = target, os.clock()
+				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, target, player)
+			end)
+			if not active() then hop.busy = false; return end
+			if not ok then
+				hop.busy, hop.pending, hop.nextAt = false, nil, os.clock() + 60
+				self.lastDecision = "ย้ายเซิร์ฟไม่สำเร็จ: " .. displayError(message)
+			end
+		end)
+	end
+
+	track(game:GetService("TeleportService").TeleportInitFailed:Connect(function(who, _, message)
+		if who ~= player or not director.hop.pending then return end
+		director.hop.pending, director.hop.busy, director.hop.nextAt = nil, false, os.clock() + 60
+		director.lastDecision = "ย้ายเซิร์ฟไม่สำเร็จ: " .. tostring(message)
+	end))
+
 	function director:Tick()
 		if not self.enabled then return end
-		if self.levelCap and os.clock() > (self.levelCapUntil or 0) then self.levelCap = nil end
+		if self.resumeReadyAt and os.clock() < self.resumeReadyAt then return end
 		local root, humanoid = self:Character()
 		if not root or not humanoid or humanoid.Health <= 0 then
-			if self.plan then self.cooldowns[self.plan.id] = os.clock() + 120; self.levelCap = math.max(1, self.plan.level - 1); self.levelCapUntil = os.clock() + 120 end
-			self.plan = nil
+			if self.travel.active then self:CancelTrip() end
 			self:CancelNavigation()
-			self.phase, self.detail = "รอเกิดใหม่", "ลดเป้าหมายหลังเสียชีวิต • ไม่ใช้การเกิดใหม่แบบเสียเงิน"
+			if self.plan then self.failedBossSpawns[self.plan.id] = self.plan.spawnKey end
+			if self.session then self.session.stage = "respawn" end
+			self.phase, self.detail = "รอเกิดใหม่", "เกิดแล้วจะกลับจุดฟาร์ม • ไม่ใช้การเกิดใหม่เสียเงิน"
 			return
 		end
-		local health = humanoid.Health / math.max(1, humanoid.MaxHealth)
-		local retreatReason = self:RetreatReason(health, self.plan, self.bossPotionStart, self.plan and self.plan.boss and self:HealingSupply() or nil)
-		if retreatReason or self.resting then
-			if not self.resting then
-				self.resting = true
-				if self.plan then
-					self.cooldowns[self.plan.id] = os.clock() + (self.plan.boss and 600 or 120)
-					if self.plan.boss then
-						self.failedBossSpawns[self.plan.id] = self.plan.spawnKey
-						self.lastDecision = "พัก " .. self.plan.name .. ": " .. tostring(retreatReason)
-					end
-					if not self.plan.boss then self.levelCap, self.levelCapUntil = math.max(1, self.plan.level - 1), os.clock() + 120 end
-					if self.plan.boss then
-						local previous
-						for _, node in ipairs(nodes) do
-							if node.data.Order >= MapData[self.plan.zone].Order then break end
-							if not node.data.BossRoom and self:CanAccess(node.id) and self:ZonePart(node.id) then previous = self:ZonePart(node.id) end
-						end
-						self.restGoal = previous and previous.Position + Vector3.new(0, 3, 0)
-					end
-				end
-				self:CancelNavigation()
+		local session = self.session
+		if session and session.stage == "respawn" then self:BeginReturn("กลับจุดฟาร์มหลังเกิดใหม่"); return end
+		if self.travel.active then self.phase, self.detail = "กำลังเดินทาง", self.travel.status; return end
+		if self.hop.pending and os.clock() - self.hop.pendingAt > 25 then
+			self.hop.pending, self.hop.busy, self.hop.nextAt = nil, false, os.clock() + 60
+			self.lastDecision = "ย้ายเซิร์ฟหมดเวลา พักก่อนลองใหม่"
+		end
+		if session and session.stage == "return" then
+			if not self.travel.completed then
+				local reason = self.travel.status; self:SetEnabled(false); self.detail = reason; return
 			end
-			setAutoFarm(false)
-			if self.restGoal and (root.Position - self.restGoal).Magnitude > 12 then
-				self.phase, self.detail = "ถอยจากบอสเพื่อพัก", "เลือดต่ำ กลับไปจุดฟาร์มก่อนพักฟื้น"
-				self:Walk(self.restGoal)
+			if os.clock() - (session.restoreAt or 0) < 1 then return end
+			-- Wait for the original target filter before resuming native combat.
+			if session.botChanged then
+				local same = self:SameSettings(decodeAttribute("BotJson"), session.bot)
+				if not same then
+					if os.clock() - session.restoreAt > 8 then self:SetEnabled(false); self.detail = "เกมยังไม่คืนค่าตัวกรอง Auto กรุณาตรวจหน้า Auto ของเกม" end
+					return
+				end
+			end
+			self:SetNativeAuto(session.native)
+			if (player:GetAttribute("AutoOn") == true) ~= session.native then return end
+			self.session, self.plan = nil, nil
+			self.phase, self.detail = "กลับมาฟาร์มแล้ว", "คืนจุดและค่า Auto เดิม • เฝ้าบอสรอบต่อไป"
+			if session.stopAfterReturn then
+				self:SetEnabled(false)
+				self.phase, self.detail = "จบรอบย้ายเซิร์ฟแล้ว", "กลับจุดและคืนค่า Auto เดิมแล้ว • กดเริ่มเพื่อเปิดรอบใหม่"
+			end
+			return
+		end
+		if session and session.stage == "hop" then
+			if not self.hopMode then self:BeginReturn("กลับจุดเดิม"); return end
+			self.phase, self.detail = "เตรียมหาบอสเซิร์ฟถัดไป", "รอคูลดาวน์ย้ายเซิร์ฟ"
+			self:HopServer(); return
+		end
+		if session and session.stage == "outbound" then
+			if not self.travel.completed then self:BeginReturn("เดินทางขาไปไม่สำเร็จ: " .. self.travel.status); return end
+			session.stage, session.arrivedAt = session.kind == "boss" and "fight" or "service", os.clock()
+		end
+		if session and session.kind ~= "boss" then
+			if os.clock() - session.startedAt > 240 then self:BeginReturn("ทริปหมดเวลา"); return end
+			if session.kind == "sell" then
+				if nearMerchant() then
+					if not session.sellAt then
+						session.junkBefore = junkInfo()
+						if sellJunk(true) then session.sellAt = os.clock() else self:BeginReturn("ไม่มี Junk ที่ส่งขายได้") end
+					elseif junkInfo() < session.junkBefore then self:BeginReturn("ขาย Junk แล้ว กลับจุดฟาร์ม")
+					elseif os.clock() - session.sellAt > 8 then self:BeginReturn("เซิร์ฟเวอร์ไม่ยืนยันขาย Junk") end
+				else
+					local map = workspace:FindFirstChild("Map")
+					local npcs = map and map:FindFirstChild("NPCs")
+					local merchant = npcs and npcs:FindFirstChild("merchant")
+					local part = merchant and (merchant.PrimaryPart or merchant:FindFirstChildWhichIsA("BasePart"))
+					if not part then self:BeginReturn("Merchant ยังไม่โหลด"); return end
+					self.phase, self.detail = "กำลังไปขาย Junk", "เดินเข้าระยะ Merchant"
+					self:Walk(part.Position, 15)
+					if self.navError then self:BeginReturn("ไป Merchant ไม่ถึง") end
+				end
+			else
+				if self.dungeonEntering then
+					self.phase, self.detail = "รอเข้าดัน", state.dungeonStatus
+					if os.clock() > self.dungeonEntering then self:BeginReturn("เข้าดันหมดเวลา") end
+				elseif not self:DungeonTrip() then self:BeginReturn(state.dungeonStatus) end
+			end
+			return
+		end
+		if session and self.plan then
+			local plan = self.plan
+			local model = plan.model
+			if not model or not model.Parent then model = self:Monster(plan.id); plan.model = model end
+			if model then
+				plan.spawnKey = model:GetAttribute("SpawnAt") or plan.spawnKey
+				self.bossSpawnKeys[plan.id] = plan.spawnKey
+				self:Watch(model)
+			end
+			local dead = (model and (tonumber(model:GetAttribute("HP")) or 1) <= 0)
+				or workspace:GetAttribute("BossAlive_" .. plan.id) == false
+			if dead then
+				self.bossLootUntil = self.bossLootUntil or os.clock() + 5
+				self.phase, self.detail = "บอสตายแล้ว รอเก็บของ", "ให้ Auto Loot เก็บของ 5 วินาที"
+				if os.clock() >= self.bossLootUntil then self:FinishBoss("บอสตายแล้ว", true) end
 				return
 			end
-			if remote("SitToggle") then remote("SitToggle"):FireServer(health < 0.75) end
-			self.phase, self.detail = "พักฟื้นเลือด", string.format("HP %.0f%% • กลับไปฟาร์มเมื่อ HP ถึง 75%%", health * 100)
-			if health >= 0.75 then self.resting, self.plan, self.configuredId, self.restGoal = false, nil, nil, nil end
-			return
-		end
-		if workspace:GetAttribute("DungeonId") ~= nil then
-			self.phase, self.detail = "อยู่ในดันเจี้ยน", "ใช้ระบบ Auto ของเกมในดัน • ตั้งค่าเส้นทางและการเก็บของจากตัวเกม"
-			setAutoFarm(true)
-			return
-		end
-		if self.bossLootUntil and os.clock() < self.bossLootUntil then
-			self.phase, self.detail = "เก็บของจากบอส", "ให้ Auto Loot ของเกมเก็บของ 5 วินาที ก่อนกลับไปฟาร์ม"
-			setAutoFarm(true)
-			return
-		end
-		if self.dungeonEntering and os.clock() < self.dungeonEntering then
-			setAutoFarm(false)
-			self.phase, self.detail = "รอเข้าดันเจี้ยน", "ส่งคำขอรอบฟรีแล้ว รอ Ready check และการย้ายเซิร์ฟเวอร์"
-			return
-		end
-		self.dungeonEntering = nil
-		if self:DungeonTrip() then return end
-		local plan = self:SelectPlan()
-		if not plan then
-			setAutoFarm(false)
-			self.phase, self.detail = "รอมอนสเตอร์เกิด", "ยังไม่พบตัวที่เลเวลผ่านและเข้าถึงได้ ตรวจใหม่อัตโนมัติ"
-			return
-		end
-		if not self.plan or plan.id ~= self.plan.id or plan.model ~= self.plan.model then
-			setAutoFarm(false)
+			local retreat = self:RetreatReason(humanoid.Health / math.max(1, humanoid.MaxHealth), plan, self.bossPotionStart, self:HealingSupply())
+			if retreat then self:FinishBoss(retreat, false); return end
+			if os.clock() - session.arrivedAt > 180 then self:FinishBoss("ต่อสู้นานเกิน 3 นาที", false); return end
+			if not model or not model.PrimaryPart then
+				self.phase, self.detail = "รอบอสโหลด", plan.name
+				if os.clock() - session.arrivedAt > 20 then self:FinishBoss("ไม่พบบอสที่จุดหมาย", false) end
+				return
+			end
+			session.botChanged = true
+			if not self:ConfigureTarget(plan.id) then self:FinishBoss("ตั้งตัวกรองบอสไม่ได้", false); return end
+			local settings, confirmed = decodeAttribute("BotJson"), true
+			if type(settings.Exclude) ~= "table" or settings.Exclude[plan.id] == true then confirmed = false else
+				for id in pairs(self.sentExcludes or {}) do
+					if settings.Exclude[id] ~= true then confirmed = false; break end
+				end
+			end
+			if not confirmed then
+				if os.clock() - self.settingsSentAt > 5 then self:FinishBoss("เซิร์ฟเวอร์ไม่ยืนยันตัวกรองบอส", false) end
+				return
+			end
+			if not self.fightStarted and (root.Position - model.PrimaryPart.Position).Magnitude > 24 then
+				self.phase, self.detail = "เข้าระยะบอส", plan.name
+				self:Walk(model.PrimaryPart.Position, 20)
+				if self.navError then self:FinishBoss("เดินเข้าระยะบอสไม่ได้", false) end
+				return
+			end
 			self:CancelNavigation()
-			self.plan, self.fightStarted, self.configuredId = plan, nil, nil
-			self.bossPotionStart = plan.boss and self:HealingSupply() or nil
-			self.navProgress = nil
-			self:Watch(plan.model)
-		end
-		local zone = self:ZonePart(plan.zone)
-		local targetRoot = plan.model and plan.model.Parent and plan.model.PrimaryPart
-		local goal = targetRoot and targetRoot.Position or (zone and zone.Position + Vector3.new(0, 3, 0))
-		if not goal then self.phase, self.detail = "รอแผนที่โหลด", plan.zone; return end
-		if not self:ConfigureTarget(plan.id) then return end
-		local saved = decodeAttribute("BotJson")
-		if type(saved.Exclude) ~= "table" or saved.Exclude[plan.id] == true then
-			self.phase, self.detail = "รอเซิร์ฟเวอร์ยืนยัน", "กำลังตั้งตัวกรองมอนสเตอร์: " .. plan.name
-			if os.clock() - (self.settingsSentAt or os.clock()) > 4 then self:SetEnabled(false); self.detail = "เซิร์ฟเวอร์ไม่ยืนยันตัวกรองมอนสเตอร์ ลองเริ่มอีกครั้ง" end
+			if not session.skillChanged then session.skillChanged = true; setRemoteBoolean("SetAutoSkill", true) end
+			self.fightStarted = self.fightStarted or os.clock()
+			setAutoFarm(true)
+			self.phase, self.detail = "กำลังตี " .. plan.name, "HP บอส " .. comma(model:GetAttribute("HP")) .. " • ใช้ระบบต่อสู้ของเกม"
 			return
 		end
-		if not self.fightStarted and (root.Position - goal).Magnitude > 24 then
-			setAutoFarm(false)
-			self.phase = plan.boss and "กำลังไปหาบอส" or "กำลังไปจุดฟาร์ม"
-			self.detail = string.format("%s Lv.%d • ระยะ %.0f studs", plan.name, plan.level, (root.Position - goal).Magnitude)
-			self:Walk(goal)
-			return
+		local boss = self:SelectedDefinition()
+		local alive = boss and workspace:GetAttribute("BossAlive_" .. boss.id)
+		if boss and alive == false then self.failedBossSpawns[boss.id], self.bossSpawnKeys[boss.id] = nil, nil end
+		local plan = self:SelectPlan()
+		if plan then self:BeginSession("boss", plan); return end
+		self.phase = "กำลังเฝ้าบอส"
+		local waitTime = boss and math.max(0, (workspace:GetAttribute("BossNext_" .. boss.id) or 0) - serverNow()) or 0
+		self.detail = (boss and boss.name or "ยังไม่เลือกบอส") .. (alive == true and " • เกิดแล้ว" or string.format(" • รอ %02d:%02d", math.floor(waitTime / 60), math.floor(waitTime % 60)))
+		self.detail ..= "\nให้ Auto ของเกมฟาร์มตามเดิม • จำจุดกลับแล้ว"
+		if boss and alive == true then
+			local allowed, reason = self:CanAccess(boss.map)
+			if not allowed then self.detail ..= " • " .. tostring(reason)
+			elseif self.failedBossSpawns[boss.id] then self.detail ..= " • พักบอสเกิดรอบนี้" end
 		end
-		self:CancelNavigation()
-		if not targetRoot then self.phase, self.detail = "รอบอสแสดงตัว", plan.name; return end
-		self.fightStarted = self.fightStarted or os.clock()
-		setAutoFarm(true)
-		local hp = plan.model:GetAttribute("HP") or 0
-		self.phase = plan.boss and "กำลังล่าบอส" or "กำลังฟาร์ม"
-		self.detail = string.format("%s Lv.%d • HP %s\n%s", plan.name, plan.level, comma(hp), plan.boss and "จบบอสแล้วกลับไปจุดฟาร์มอัตโนมัติ" or "ติดตามเลือดและเวลาฆ่า เพื่อปรับความยาก")
-		local deadline = plan.boss and 180 or 35
-		if os.clock() - self.fightStarted > deadline then
-			self.cooldowns[plan.id] = os.clock() + (plan.boss and 600 or 120)
-			if plan.boss then self.failedBossSpawns[plan.id], self.lastDecision = plan.spawnKey, "พัก " .. plan.name .. ": ต่อสู้นานเกิน 3 นาที" end
-			if not plan.boss then self.levelCap, self.levelCapUntil = math.max(1, plan.level - 1), os.clock() + 120 end
-			self.plan = nil
-			setAutoFarm(false)
-			self.phase, self.detail = "ปรับเป้าหมายลง", "ฆ่าช้าเกินไป พักเป้าหมายนี้ 2 นาที แล้วเลือกตัวรองลงมา"
+		if self.hopMode and self.huntBosses and boss and alive == false and self:CanAccess(boss.map) then
+			self:HopServer(); return
+		end
+		if not self.hopMode and self.runDungeons and self:DungeonStatus() and os.clock() - (self.lastDungeonAttempt or -600) >= 600 then
+			self.lastDungeonAttempt, self.dungeonTrip = os.clock(), true
+			self:BeginSession("dungeon"); return
+		end
+		if self.sellTrip and not self.hopMode and junkInfo() >= state.junkThreshold and os.clock() - (self.lastSellTrip or -120) > 120 then
+			self.lastSellTrip = os.clock()
+			if nearMerchant() then sellJunk(false) else
+				local _, value = junkInfo()
+				local town = self:PillarPosition("Town")
+				local _, returnCost = self:TravelRoute(self.home.zone, self.home.position, town)
+				if value > returnCost + 100 then self:BeginSession("sell")
+				else self.lastDecision = "รอ Junk มากขึ้น: มูลค่า " .. comma(value) .. " / ค่าเดินทางกลับประมาณ " .. comma(returnCost) end
+			end
 		end
 	end
 
@@ -2158,20 +2451,24 @@ do
 			end
 		end
 		self.ui.title.Text, self.ui.detail.Text = self.phase, self.detail
-		self.ui.start.Text = self.enabled and "หยุดการทำงาน" or "เริ่มฟาร์มอัตโนมัติ"
+		self.ui.start.Text = self.enabled and "หยุดเฝ้าบอส / ทริป" or "จำจุดนี้และเริ่มเฝ้าบอส"
 		self.ui.start.BackgroundColor3 = self.enabled and COLORS.Red or COLORS.Green
 		local minutes = math.max(1 / 60, (os.clock() - (self.startedAt > 0 and self.startedAt or os.clock())) / 60)
 		local gained = self.startedAt > 0 and math.max(0, self:TotalExp(player:GetAttribute("Level"), player:GetAttribute("Exp")) - (self.startTotalExp or 0)) or 0
 		local silver = self.startedAt > 0 and (tonumber(player:GetAttribute("Silver")) or 0) - self.startSilver or 0
 		self.ui.stats.Text = string.format("ฆ่า %d ตัว  •  EXP +%s  •  %s EXP/นาที  •  Silver %+d", self.kills, comma(gained), comma(gained / minutes), silver)
 		local _, dungeon = self:DungeonStatus()
-		local boss = bosses[1]
-		for index = #bosses, 1, -1 do
-			if (MonsterData[bosses[index].id] or {}).Level and MonsterData[bosses[index].id].Level <= (player:GetAttribute("Level") or 1) and self:CanAccess(bosses[index].map) then boss = bosses[index]; break end
-		end
+		local boss = self:SelectedDefinition() or bosses[1]
 		local remaining = math.max(0, (workspace:GetAttribute("BossNext_" .. boss.id) or 0) - serverNow())
 		local bossText = workspace:GetAttribute("BossAlive_" .. boss.id) == true and (boss.name .. ": เกิดแล้ว") or string.format("%s: %02d:%02d", boss.name, math.floor(remaining / 60), math.floor(remaining % 60))
 		self.ui.note.Text = bossText .. "\n" .. dungeon
+		self.ui.note.Text ..= "\nโหมด: " .. (self.hopMode and ("ข้ามเซิร์ฟ " .. self.hop.count .. "/" .. self.hop.max) or "ตีบอสแล้วกลับจุดเดิม")
+		self.ui.note.Text ..= " • เลือกบอสได้ที่หน้า บอส 10 นาที"
+		if self.home then self.ui.note.Text ..= "\nจุดกลับ: " .. self.home.zone .. string.format(" (%.0f, %.0f, %.0f)", self.home.position.X, self.home.position.Y, self.home.position.Z) end
+		for id, button in pairs(bossChoices) do
+			button.Text = id == self.selectedBoss and "✓ บอสที่เลือก" or "เลือกบอสตัวนี้"
+			button.BackgroundColor3 = id == self.selectedBoss and Color3.fromRGB(35, 78, 45) or COLORS.Card2
+		end
 		self.ui.note.Text ..= "\nAuto Equip: " .. (player:GetAttribute("AutoEquip") == true and "ON • เลือก CP สูงสุดโดยเกม" or "OFF / รอยืนยัน")
 		for _, node in ipairs(nodes) do
 			local minimum = tonumber(tostring(node.data.LevelText):match("%d+")) or math.huge
@@ -2182,10 +2479,38 @@ do
 			end
 		end
 		if self.lastDecision then self.ui.note.Text ..= "\n" .. self.lastDecision end
-		state.dungeonStatus = dungeon
+		if not self.session or self.session.kind ~= "dungeon" then state.dungeonStatus = dungeon end
+	end
+
+	function director:ValidResume(data)
+		if type(data) ~= "table" or data.version ~= 1 or data.user ~= player.UserId
+			or data.place ~= game.PlaceId or data.target ~= game.JobId or type(data.at) ~= "number"
+			or os.time() - data.at < 0 or os.time() - data.at >= 600 then return false end
+		local known = false
+		for _, boss in ipairs(bosses) do if boss.id == data.selected then known = true end end
+		local home = data.home
+		return known and type(home) == "table" and type(home.zone) == "string"
+			and (home.zone == "Town" or MapData[home.zone] ~= nil)
+			and type(home.x) == "number" and type(home.y) == "number" and type(home.z) == "number"
+			and math.abs(home.x) < 100000 and math.abs(home.y) < 100000 and math.abs(home.z) < 100000
+			and type(data.bot) == "table" and type(data.count) == "number" and data.count >= 1 and data.count <= 10
 	end
 
 	director:Preview()
+	local resume = env.__DukeHTResume
+	env.__DukeHTResume = nil
+	if director:ValidResume(resume) then
+		director.selectedBoss, director.hopMode, director.enabled = resume.selected, true, true
+		director.home = {zone = resume.home.zone, position = Vector3.new(resume.home.x, resume.home.y, resume.home.z)}
+		director.homeBot, director.homeAuto, director.equipBest = resume.bot, resume.native == true, resume.equip == true
+		director.travel.bookmark = {zone = director.home.zone, position = director.home.position, auto = director.homeAuto}
+		director.hop = {visited = type(resume.visited) == "table" and resume.visited or {}, count = resume.count,
+			max = math.clamp(tonumber(resume.max) or 10, 1, 10), nextAt = os.clock() + 20}
+		director.startedAt, director.startSilver = os.clock(), tonumber(player:GetAttribute("Silver")) or 0
+		director.startTotalExp = director:TotalExp(player:GetAttribute("Level"), player:GetAttribute("Exp"))
+		director.phase, director.detail = "ต่อจากเซิร์ฟเดิม", "รอข้อมูลบอสในเซิร์ฟนี้"
+		director.resumeReadyAt = os.clock() + 15
+	end
 	director:RefreshUI()
 	task.spawn(function()
 		while runtime.alive do
@@ -2193,7 +2518,7 @@ do
 			if not ok then
 				director.lastError = tostring(message)
 				pcall(function() director:SetEnabled(false) end)
-				director.phase, director.detail = "หยุดเพราะข้อผิดพลาด", "ตรวจ runtime.manager.lastError เพื่อดูรายละเอียด"
+				director.phase, director.detail = "หยุดเพราะข้อผิดพลาด", "หยุดงานแล้ว ลองเปิดหน้าต่างใหม่ • " .. displayError(message)
 				pcall(function() director:RefreshUI() end)
 			end
 			task.wait(0.5)
