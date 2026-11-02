@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.1-box-walk"}
+local runtime = {alive = true, connections = {}, version = "3.3.2-boss-entry"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -2039,6 +2039,22 @@ do
 		for _, boss in ipairs(bosses) do if boss.id == self.selectedBoss then return boss end end
 	end
 
+	function director:BossEngageDistance(size)
+		return math.clamp((tonumber(size) or 16) / 2 + 16, 24, 100)
+	end
+
+	function director:BossNeedsApproach(position, target, size)
+		local delta = position - target
+		return Vector2.new(delta.X, delta.Z).Magnitude > self:BossEngageDistance(size)
+	end
+
+	function director:BossEntryPoint(zone, fromPosition, size)
+		local delta = Vector3.new(fromPosition.X - zone.Position.X, 0, fromPosition.Z - zone.Position.Z)
+		local direction = delta.Magnitude > 0.01 and delta.Unit or Vector3.new(0, 0, 1)
+		local inset = math.min(math.max(0, math.min(zone.Size.X, zone.Size.Z) / 2 - 12), self:BossEngageDistance(size) + 12)
+		return zone.Position + direction * inset + Vector3.new(0, 3, 0)
+	end
+
 	function director:SelectPlan()
 		if not self.huntBosses then return nil end
 		local boss = self:SelectedDefinition()
@@ -2059,6 +2075,36 @@ do
 	function director:CancelNavigation()
 		self.navToken += 1
 		self.navBusy, self.navGoal, self.navError = false, nil, nil
+	end
+
+	function director:WaypointReached(position, point, radius)
+		local delta = position - point
+		return Vector2.new(delta.X, delta.Z).Magnitude <= radius and math.abs(delta.Y) <= 6
+	end
+
+	function director:CanNavigateJump(humanoid)
+		return humanoid.UseJumpPower and humanoid.JumpPower > 0 or not humanoid.UseJumpPower and humanoid.JumpHeight > 0
+	end
+
+	function director:NavigationDetour(position, goal)
+		local delta = Vector3.new(goal.X - position.X, 0, goal.Z - position.Z)
+		if delta.Magnitude < 0.1 then return nil end
+		local side = Vector3.new(-delta.Unit.Z, 0, delta.Unit.X)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = {workspace:FindFirstChild("Map") or workspace.Terrain}
+		params.RespectCanCollide = true
+		local offsets = {Vector3.new(6, 0, 0), Vector3.new(-6, 0, 0), Vector3.new(0, 0, 6), Vector3.new(0, 0, -6), side * 6, side * -6, side * 10, side * -10}
+		for _, offset in ipairs(offsets) do
+			local candidate = position + offset
+			local clear = workspace:Blockcast(CFrame.new(position), Vector3.new(2, 4, 1), candidate - position, params) == nil
+			for _, height in ipairs({-1, 0, 1.5}) do
+				if workspace:Raycast(position + Vector3.new(0, height, 0), candidate - position, params) then clear = false; break end
+			end
+			local floor = workspace:Raycast(candidate + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), params)
+			if clear and floor and floor.Normal.Y > 0.7 then return candidate end
+		end
+		return nil
 	end
 
 	-- A single worker advances waypoints every frame, independently of the UI tick.
@@ -2082,27 +2128,50 @@ do
 					and root.Parent and humanoid.Health > 0
 			end
 			local ok, message = pcall(function()
-				local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, WaypointSpacing = 7})
-				local computed = pcall(path.ComputeAsync, path, root.Position, goal)
-				if not active() then return end
-				local points = computed and path.Status == Enum.PathStatus.Success and path:GetWaypoints()
-					or {{Position = goal, Action = Enum.PathWaypointAction.Walk}}
-				local progress, progressAt = root.Position, os.clock()
-				for index, point in ipairs(points) do
+				for attempt = 1, 3 do
+					local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = self:CanNavigateJump(humanoid), WaypointSpacing = 5})
+					local computed = pcall(path.ComputeAsync, path, root.Position, goal)
 					if not active() then return end
-					if (root.Position - goal).Magnitude <= tolerance then break end
-					local radius = index == #points and tolerance or 4
-					if (root.Position - point.Position).Magnitude <= radius then continue end
-					if point.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
-					humanoid:MoveTo(point.Position)
-					local sentAt = os.clock()
-					while active() and (root.Position - point.Position).Magnitude > radius do
-						if (root.Position - goal).Magnitude <= tolerance then break end
-						if (root.Position - progress).Magnitude > 1 then progress, progressAt = root.Position, os.clock() end
-						if os.clock() - progressAt > 8 then error("เส้นทางติดขัด เดินต่อไม่ได้") end
-						if os.clock() - sentAt > 5 then humanoid:MoveTo(point.Position); sentAt = os.clock() end
-						RunService.Heartbeat:Wait()
+					local points = computed and path.Status == Enum.PathStatus.Success and path:GetWaypoints()
+						or {{Position = goal, Action = Enum.PathWaypointAction.Walk}}
+					local retry = false
+					for index, point in ipairs(points) do
+						if not active() then return end
+						if (root.Position - goal).Magnitude <= tolerance then return end
+						local radius = index == #points and tolerance or 2
+						if self:WaypointReached(root.Position, point.Position, radius) then continue end
+						self.navWaypoint, self.navAttempt = point.Position, attempt
+						if point.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
+						humanoid:MoveTo(point.Position)
+						local sentAt = os.clock()
+						local initialDelta = root.Position - point.Position
+						local bestDistance, progressAt = Vector2.new(initialDelta.X, initialDelta.Z).Magnitude, os.clock()
+						while active() and not self:WaypointReached(root.Position, point.Position, radius) do
+							if (root.Position - goal).Magnitude <= tolerance then return end
+							local delta = root.Position - point.Position
+							local distance = Vector2.new(delta.X, delta.Z).Magnitude
+							if distance < bestDistance - 0.5 then bestDistance, progressAt = distance, os.clock() end
+							if os.clock() - progressAt > 4 then
+								if attempt == 3 then error("เส้นทางติดขัดหลังหาเส้นทางใหม่ 3 ครั้ง") end
+								local detour = self:NavigationDetour(root.Position, goal)
+								if detour then
+									self.lastNavDetour = detour
+									local autoRotate = humanoid.AutoRotate
+									humanoid.AutoRotate = false
+									humanoid:MoveTo(detour)
+									local detourDeadline = os.clock() + 2
+									while active() and os.clock() < detourDeadline and not self:WaypointReached(root.Position, detour, 2) do RunService.Heartbeat:Wait() end
+									humanoid.AutoRotate = autoRotate
+								elseif self:CanNavigateJump(humanoid) then humanoid.Jump = true end
+								retry = true
+								break
+							end
+							if os.clock() - sentAt > 3 then humanoid:MoveTo(point.Position); sentAt = os.clock() end
+							RunService.Heartbeat:Wait()
+						end
+						if retry then break end
 					end
+					if not retry then return end
 				end
 			end)
 			if token ~= self.navToken then return end
@@ -2166,6 +2235,38 @@ do
 			end
 		end
 		return source, distance
+	end
+
+	function director:PillarApproachPoints(source, fromPosition)
+		local delta = Vector3.new(fromPosition.X - source.Position.X, 0, fromPosition.Z - source.Position.Z)
+		local toward = delta.Magnitude > 0.01 and delta.Unit or Vector3.new(0, 0, 1)
+		local right = Vector3.new(-toward.Z, 0, toward.X)
+		local points = {}
+		for _, angle in ipairs({0, 45, -45, 90, -90, 135, -135, 180}) do
+			local radians = math.rad(angle)
+			table.insert(points, source.Position + (toward * math.cos(radians) + right * math.sin(radians)) * 8.5)
+		end
+		return points
+	end
+
+	function director:FindPillarApproach(source, active)
+		local root, humanoid = self:Character()
+		if not root or not humanoid then return nil end
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = {workspace:FindFirstChild("Map") or workspace.Terrain}
+		params.RespectCanCollide = true
+		for _, point in ipairs(self:PillarApproachPoints(source, root.Position)) do
+			if active and not active() then return nil end
+			local hit = workspace:Raycast(point + Vector3.new(0, 10, 0), Vector3.new(0, -28, 0), params)
+			if not hit or hit.Normal.Y < 0.6 then continue end
+			local goal = Vector3.new(point.X, hit.Position.Y + humanoid.HipHeight + root.Size.Y / 2, point.Z)
+			local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = self:CanNavigateJump(humanoid), WaypointSpacing = 5})
+			local ok = pcall(path.ComputeAsync, path, root.Position, goal)
+			if active and not active() then return nil end
+			if ok and path.Status == Enum.PathStatus.Success then return goal end
+		end
+		return nil
 	end
 
 	function director:TravelRoute(id, returnPosition, fromPosition)
@@ -2257,9 +2358,14 @@ do
 					local source = current and self:NearestPillar(current.Position)
 					if not source then error("ไม่พบเสาต้นทางที่โหลดอยู่ ลองเดินเข้าใกล้เสา") end
 					local prompt = source:FindFirstChild("WarpPrompt")
-					local range = math.max(3, math.min(6, prompt.MaxActivationDistance - 2))
-					-- Check actual prompt distance, rather than distance to an offset waypoint.
-					if not moveTo(source.Position, "กำลังไปเสาวาร์ปต้นทาง", range) then return end
+					travel.status = "หาเส้นทางไปจุดยืนข้างเสาวาร์ป"
+					local approach = self:FindPillarApproach(source, alive)
+					if not alive() then return end
+					if not approach then error("ไม่พบทางเดินไปข้างเสาวาร์ป ลองยืนกลางทางเดินแล้วเลือกอีกครั้ง") end
+					if not moveTo(approach, "กำลังเดินไปข้างเสาวาร์ป", 1.8) then return end
+					local nearSource = self:Character()
+					if not nearSource or (nearSource.Position - source.Position).Magnitude > prompt.MaxActivationDistance then error("ยังอยู่นอกระยะเสาวาร์ป") end
+					travel.sourceApproach = {goal = approach, distance = (nearSource.Position - source.Position).Magnitude}
 					self:CancelNavigation()
 					local openedAt = os.clock()
 					local fire = rawget(env, "fireproximityprompt")
@@ -2286,10 +2392,29 @@ do
 				end
 				if not alive() then return end
 				local zone = self:ZonePart(id)
+				if internal and MapData[id] and MapData[id].BossRoom and not returnPosition then
+					local zoneDeadline = os.clock() + 8
+					while alive() and not zone and os.clock() < zoneDeadline do
+						travel.status = "รอเขตห้องบอสโหลดก่อนเดินเข้า"
+						task.wait(0.15)
+						zone = self:ZonePart(id)
+					end
+					if not alive() then return end
+					if not zone then error("ห้องบอสยังไม่โหลด ลองเดินเข้าใกล้ทางเข้าห้องแล้วเริ่มอีกครั้ง") end
+				end
 				local pillar = self:PillarPosition(id)
 				local bossEntry = internal and MapData[id] and MapData[id].BossRoom and zone
-				local goal = returnPosition or (bossEntry and bossEntry.Position + Vector3.new(0, 3, 0))
-					or (pillar and pillar + Vector3.new(0, 3, 7)) or (zone and zone.Position + Vector3.new(0, 3, 0))
+				local current = self:Character()
+				local size = MapData[id] and tonumber((MonsterData[MapData[id].Boss] or {}).Size) or 16
+				local goal = returnPosition or (bossEntry and self:BossEntryPoint(bossEntry, current.Position, size))
+				if not goal and pillar then
+					local map = workspace:FindFirstChild("Map")
+					local pillars = map and map:FindFirstChild("WarpPillars")
+					local model = pillars and pillars:FindFirstChild("WarpPillar_" .. id)
+					local column = model and model:FindFirstChild("Column")
+					goal = column and self:FindPillarApproach(column, alive)
+				end
+				goal = goal or (zone and zone.Position + Vector3.new(0, 3, 0))
 				if not goal then error("ยังไม่มีพิกัดด่านนี้ ลองวาร์ปไปเสาใกล้ด่านก่อน") end
 				if not moveTo(goal, returning and "กำลังกลับจุดเดิม" or "กำลังไปจุดหมาย", 7) then return end
 				travel.completed = true
@@ -2351,7 +2476,9 @@ do
 		settings.Exclude, settings.Only = excludes, {}
 		settings.Mode, settings.Preset = "fight", "normal"
 		settings.AttackLeader, settings.NormalAttack, settings.UseSkills = true, true, true
-		settings.FixedArea, settings.Range, settings.Radius, settings.Loot = true, 60, 60, true
+		local targetSize = tonumber((MonsterData[id] or {}).Size) or 16
+		local radius = math.clamp(math.max(60, targetSize + 20), 20, 150)
+		settings.FixedArea, settings.Range, settings.Radius, settings.Loot = true, radius, radius, true
 		local event = remote("SetBotSettings")
 		if not event then self.phase, self.detail = "หยุด: ตั้งเป้าหมายไม่ได้", "ไม่พบ SetBotSettings"; return false end
 		event:FireServer(settings)
@@ -2459,6 +2586,11 @@ do
 		if self.hopMode then bot, native = self.homeBot or bot, self.homeAuto == true end
 		self.session = {kind = kind, stage = "outbound", bot = bot, native = native,
 			autoSkill = player:GetAttribute("AutoSkill") == true, startedAt = os.clock()}
+		if kind == "boss" and not self:PreparePotions(self.session) then
+			self.session = nil
+			self.lastDecision = "ตั้งระบบยาก่อนเข้าห้องบอสไม่ได้"
+			return false
+		end
 		if kind == "dungeon" then self.promptFiredAt, self.dungeonEntering, self.dungeonRequested = nil, nil, nil end
 		self.travel.bookmark = {zone = self.home.zone, position = self.home.position, auto = native}
 		self.plan, self.configuredId = plan, nil
@@ -2467,6 +2599,7 @@ do
 		local id = plan and plan.zone or "Town"
 		if not self:TravelTo(id, nil, false, true) then
 			self.lastDecision = self.travel.status
+			self:RestoreSettings(self.session)
 			self.session, self.plan = nil, nil
 			if plan then self.cooldowns[plan.id] = os.clock() + 60 end
 			return false
@@ -2739,9 +2872,11 @@ end
 				if os.clock() - self.settingsSentAt > 5 then self:FinishBoss("เซิร์ฟเวอร์ไม่ยืนยันตัวกรองบอส", false) end
 				return
 			end
-			if not self.fightStarted and (root.Position - model.PrimaryPart.Position).Magnitude > 24 then
+			local targetSize = tonumber((MonsterData[plan.id] or {}).Size) or 16
+			if not self.fightStarted and self:BossNeedsApproach(root.Position, model.PrimaryPart.Position, targetSize) then
 				self.phase, self.detail = "เข้าระยะบอส", plan.name
-				self:Walk(model.PrimaryPart.Position, 20)
+				local target = model.PrimaryPart.Position
+				self:Walk(Vector3.new(target.X, root.Position.Y, target.Z), self:BossEngageDistance(targetSize) - 2)
 				if self.navError then self:FinishBoss("เดินเข้าระยะบอสไม่ได้", false) end
 				return
 			end

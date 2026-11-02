@@ -387,4 +387,48 @@ test("box state confirmation is counted only once", function()
 	assert(fake.boxesOpened == 1 and fake.pickupConfirmed == 1)
 end)
 
+test("pillar approach points remain outside the solid pedestal", function()
+	local source = {Position = Vector3.new(20, 174, -2586)}
+	local points = manager:PillarApproachPoints(source, Vector3.new(0, 172, -2800))
+	assert(#points == 8)
+	for _,point in ipairs(points) do
+		assert(math.abs((point - source.Position).Magnitude - 8.5) < 0.01)
+	end
+	assert(points[1].Z < source.Position.Z)
+end)
+
+test("giant turtle can engage at its surface without reaching its elevated center", function()
+	assert(not manager:BossNeedsApproach(Vector3.new(0, 284, -4540), Vector3.new(0, 320, -4590), 72))
+	assert(manager:BossNeedsApproach(Vector3.new(0, 284, -4400), Vector3.new(0, 320, -4590), 72))
+end)
+
+test("normal boss approach stays at the original horizontal range", function()
+	assert(manager:BossEngageDistance(16) == 24)
+	assert(manager:BossNeedsApproach(Vector3.zero, Vector3.new(0, 4, 30), 16))
+	assert(not manager:BossNeedsApproach(Vector3.zero, Vector3.new(0, 4, 20), 16))
+end)
+
+test("giant boss entry stays near the arena edge rather than its spawn center", function()
+	local zone = {Position = Vector3.new(0, 283, -4540), Size = Vector3.new(170, 0.4, 170)}
+	local goal = manager:BossEntryPoint(zone, Vector3.new(19, 285, -4373), 72)
+	assert(goal.Z > -4490 and goal.Z < -4465)
+	assert(math.abs(goal.Y - 286) < 0.01)
+end)
+
+test("path waypoints use horizontal precision with normal root-to-floor height", function()
+	assert(manager:WaypointReached(Vector3.new(0, 5, 0), Vector3.new(1, 2, 0), 2))
+	assert(not manager:WaypointReached(Vector3.new(0, 5, 0), Vector3.new(3, 2, 0), 2))
+	assert(not manager:WaypointReached(Vector3.new(0, 20, 0), Vector3.new(0, 2, 0), 2))
+end)
+
+test("navigation detour rejects a zero-length movement goal", function()
+	assert(manager:NavigationDetour(Vector3.zero, Vector3.zero) == nil)
+end)
+
+test("pathfinding cannot plan jumps when the game disables jumping", function()
+	assert(not manager:CanNavigateJump({UseJumpPower = true, JumpPower = 0, JumpHeight = 7}))
+	assert(not manager:CanNavigateJump({UseJumpPower = false, JumpPower = 50, JumpHeight = 0}))
+	assert(manager:CanNavigateJump({UseJumpPower = true, JumpPower = 50, JumpHeight = 0}))
+end)
+
 getgenv().__CodexFarmDirectorTests = results

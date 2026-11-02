@@ -1,5 +1,24 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.2-boss-entry — 2026-11-03
+
+Customer feedback: Volcano Turtle required a manual Auto click; walks toward warp pillars often stalled.
+
+Confirmed causes and changes:
+
+- The warp goal was inside the solid Column/pedestal. A live Field10 → Boss03 source walk stalled at the sky bridge rail (`x≈10.91, z≈-2795.05`) after pathfinding could not reach the pillar center. The new approach planner tests up to eight ground points **8.5 studs beside the pillar**, chooses a reachable path and checks actual prompt range. The revised path crossed the bridge and the source opened at **7.93 studs**, followed by a confirmed Boss05 warp.
+- The connected game's avatar has **JumpPower=0 / JumpHeight=0**. Paths previously allowed jumps and could lead into the Town event booth crates. Navigation now matches the avatar's jump capability, uses tighter horizontal waypoint completion, detects lack of progress toward the waypoint (rather than counting sideways/jumping jitter), and permits up to three plans with collision-checked lateral recovery. Recovery briefly preserves facing direction so the avatar can strafe out of a tight corner; AutoRotate is restored afterward.
+- Ordinary bosses use Size **16**, while the Turtle is Size **72** and its PrimaryPart was observed at **Y≈317**, over 30 studs above the player's **Y≈284**. The old fixed 24-stud 3D gate could never be satisfied. Engagement now uses a size-aware horizontal distance (52 for the Turtle, 24 for ordinary bosses), and native target range scales to **92** for the Turtle. Native combat owns fighting after engagement.
+- Boss-room travel waits up to eight seconds for the zone to stream in, approaches the near arena edge rather than the spawn center and sets potions before departure. The first manual scouting run waited at the arena center and died as the boss spawned; it used free Town respawn. No boss kill is inferred from that failed run.
+
+Verified so far:
+
+- The revised Town → Boss05 journey completed, including a source acknowledgement at **10.00 studs**.
+- Auto **turned on without manual input**, selected **Volcano Turtle King**, and boss HP decreased from **1,330,000 to 1,255,483** in the first observed combat sample. Native HP potion use was active.
+- **66/66 regression checks** cover pillar clearance, giant-boss range/height, near-edge entry, horizontal waypoints and disabled jumping in addition to previous policies. Endpoint/artwork checks pass.
+- The Lv.99 Thief test character subsequently **died during the Turtle fight** after using six HP potions. The observed HP decrease above verifies automatic targeting/attack, not a completed kill. The assistant was stopped, native HP settings returned to **70%**, and free Town respawn was used. Full Turtle defeat is not verified for this build; level 99 alone did not provide sufficient survivability in this run.
+- A further **Town → Boss03** warp completed after the jump-capability fix, with source acknowledgement at **9.43 studs**. The character then walked back across the sky bridge to its original Field10 point, using the middle of the bridge instead of the rail where the baseline stalled. Final distance **4.42 studs**, HP **5,823/5,823**, native Auto **OFF**, native potion threshold **70%**, assistant stopped and no active travel/error.
+
 ## Version 3.3.1-box-walk — 2026-11-02
 
 The earlier pickup helper only acted inside E reach. It now actively walks to tagged loot boxes within 70 studs while native Auto is running, pauses native movement, opens through the real E prompt, returns to its captured departure point and restores Auto. It keeps the movement owner separate from boss/warp/dungeon trips, rejects different floors, supports cancellation and stops blocked/expired routes. The game's `OpenTitle` attribute now confirms the box result; the previous removal-only detection could miss a successful opening while its animation was still present.

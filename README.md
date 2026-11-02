@@ -1,6 +1,6 @@
 # DUKE HUB — Hunting Together RPG
 
-Current version: **3.3.1-box-walk**.
+Current version: **3.3.2-boss-entry**.
 
 ## Run
 
@@ -26,6 +26,8 @@ The loader installs the supplied logo/icons into `duke_hub_assets` and launches 
 Native Auto may consume healing potions configured in the game. Warp fees follow the game; repeat boss trips and server hopping can spend Silver. Auto Equip has its own switch. Reward and quest helpers remain separate opt-in controls.
 
 Travel no longer requires a loaded destination Column: it uses the persistent pillar model pivot and waits for the source pillar's `PillarOpen` acknowledgement. Walking advances continuously in one cancellable worker. Fields without pillars use ordinary paths; locked gates remain enforced.
+
+Warp travel selects a reachable standing point 8.5 studs beside the solid pillar, rather than pathfinding into its center. Waypoints use horizontal precision with allowance for the avatar's normal height above the floor. A stalled path can take a short collision-checked sidestep and replan, up to three attempts. Boss travel waits for the room zone to stream in and approaches its near edge. Potions are configured before departure. Boss engagement and native target radius account for model size: the 72-size Volcano Turtle no longer has to satisfy the same center-distance check as 16-size bosses, and its elevated center does not prevent Auto from starting.
 
 Roblox references used for the server browser and failure handling: [public server endpoints](https://create.roblox.com/docs/cloud/reference/domains/games), [TeleportService](https://create.roblox.com/docs/reference/engine/classes/TeleportService).
 
