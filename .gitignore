@@ -1,0 +1,12 @@
+farm_control_center copy.luau
+test.lua
+SECURITY_AUDIT.md
+server_security/
+ีicon/
+Glassmorphism (5)-Photoroom.png
+.env
+.env.*
+node_modules/
+.wrangler/
+.DS_Store
+*.log
