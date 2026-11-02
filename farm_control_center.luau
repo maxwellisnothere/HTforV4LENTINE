@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.0-boss-sustain"}
+local runtime = {alive = true, connections = {}, version = "3.3.1-box-walk"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -574,7 +574,7 @@ local director = {
 	enabled = false, huntBosses = true, runDungeons = false,
 	selectedBoss = "terra_colossus", hopMode = false, sellTrip = false,
 	healAt = 70, potionBudget = 50, retreatAt = 25, potionChoice = "current", fightMinutes = 0,
-	autoPickup = true, pickupStatus = "รอกล่องและของดรอปใกล้ตัว", lootAttempts = setmetatable({}, {__mode = "k"}),
+	autoPickup = true, boxRadius = 70, pickupStatus = "รอกล่องในระยะ 70 studs", lootAttempts = setmetatable({}, {__mode = "k"}),
 	hop = {visited = {}, count = 0, max = 10, nextAt = 0},
 	equipBest = true, travel = {active = false, token = 0, status = "เลือกด่านที่ต้องการ", bookmark = previousDirector and previousDirector.travel and previousDirector.travel.bookmark},
 	phase = "พร้อมเฝ้าบอส", detail = "ยืนจุดฟาร์ม เปิด Auto ของเกม แล้วกดเริ่มเฝ้าบอส",
@@ -694,6 +694,7 @@ do
 		track(button.MouseButton1Click:Connect(function()
 			if key == "hopMode" then director:SetHopMode(not director.hopMode); refresh(); return end
 			director[key] = not director[key]; refresh()
+			if key == "autoPickup" and not director.autoPickup then director:CancelBoxTrip(true, "ปิดเดินเก็บกล่องแล้ว") end
 		end))
 		table.insert(refreshers, refresh)
 		refresh()
@@ -703,7 +704,7 @@ do
 	option("กลับเมืองขาย Junk แล้วกลับจุดเดิม", "sellTrip")
 	option("ล่าบอสข้ามเซิร์ฟ (สูงสุด 10 ครั้ง/รอบ)", "hopMode")
 	option("ใส่อุปกรณ์ที่ CP สูงสุดอัตโนมัติ", "equipBest")
-	option("เปิดกล่อง E และเก็บของใกล้ตัว", "autoPickup")
+	option("เดินเปิดกล่อง E (70 studs) และเก็บของ", "autoPickup")
 	local sustain = makeCard(playPage, 224)
 	sustain.Name = "BossSustain"
 	titleLabel(sustain, "ยาและงบต่อบอส", "ตั้งก่อนออกทริป • งบ 0 = ไม่ใช้ยา • เวลา 0 = ไม่จำกัด")
@@ -1712,25 +1713,158 @@ do
 		return not owner or owner == 0 or owner == player.UserId or freeAt <= now
 	end
 
+	function director:LootIsGone(object, kind)
+		return not object.Parent or not CollectionService:HasTag(object, kind) or object:GetAttribute("Opened") == true
+			or (kind == "LootBox" and object:GetAttribute("OpenTitle") ~= nil)
+	end
+
+	function director:ConfirmPickup(object, kind)
+		local attempt = self.lootAttempts[object] or {}
+		if attempt.confirmed then return end
+		attempt.confirmed = true
+		self.lootAttempts[object] = attempt
+		self.pickupConfirmed = (self.pickupConfirmed or 0) + 1
+		if kind == "LootBox" then self.boxesOpened = (self.boxesOpened or 0) + 1 else self.dropsPicked = (self.dropsPicked or 0) + 1 end
+		self.pickupStatus = "เปิดกล่อง " .. (self.boxesOpened or 0) .. " • เก็บของ " .. (self.dropsPicked or 0) .. " ครั้ง"
+	end
+
+	function director:CanWalkToBox(distance, height, busy, autoOn)
+		return not busy and autoOn == true and distance > 6 and distance <= (self.boxRadius or 70) and math.abs(height) <= 12
+	end
+
+	function director:CancelBoxTrip(resumeAuto, reason)
+		local trip = self.lootTrip
+		if not trip then return end
+		self.lootTrip = nil
+		self:CancelNavigation()
+		local root, humanoid = self:Character()
+		if root and humanoid then humanoid:MoveTo(root.Position) end
+		self.boxSearchAfter = os.clock() + 3
+		self.pickupStatus = reason or "ยกเลิกเดินเก็บกล่องแล้ว"
+		if resumeAuto then self:SetNativeAuto(trip.native) end
+	end
+
+	function director:StartBoxTrip(object)
+		local root = self:Character()
+		if not root then return end
+		self:CancelNavigation()
+		self.lootTrip = {active = true, object = object, origin = root.Position, native = player:GetAttribute("AutoOn") == true,
+			stage = "approach", startedAt = os.clock(), deadline = os.clock() + 35, attempts = 0,
+			startDistance = (root.Position - object.Position).Magnitude}
+		self:SetNativeAuto(false)
+		self.pickupStatus = "พัก Auto แล้วเดินไปเปิดกล่อง"
+	end
+
+	function director:ReturnFromBox(reason)
+		local trip = self.lootTrip
+		if not trip then return end
+		self:CancelNavigation()
+		trip.stage, trip.deadline, trip.result = "return", os.clock() + 35, reason
+		self.pickupStatus = reason .. " • กำลังกลับจุดฟาร์ม"
+	end
+
+	function director:StepBoxTrip()
+		local trip = self.lootTrip
+		if not trip then return end
+		local root, humanoid = self:Character()
+		if not self.autoPickup or not root or not humanoid or humanoid.Health <= 0 then self:CancelBoxTrip(false); return end
+		if self.travel.active or self.session or self.hop.busy or self.hop.pending then self:CancelBoxTrip(false); return end
+		if player:GetAttribute("AutoOn") == true then
+			self:SetNativeAuto(false)
+			self:CancelNavigation()
+			self.pickupStatus = "พัก Auto ก่อนเดินไปกล่อง"
+			if os.clock() - trip.startedAt > 5 and trip.stage == "approach" and not trip.walkStarted then
+				self:CancelBoxTrip(true, "พัก Auto ไม่สำเร็จ ลองเปิดสคริปต์ใหม่")
+			end
+			return
+		end
+		if self.navError then
+			if trip.stage == "return" then self:CancelBoxTrip(true, "ทางกลับกล่องติดขัด • คืน Auto แล้ว")
+			else self:ReturnFromBox("ไปกล่องไม่ถึง") end
+			return
+		end
+		if os.clock() >= trip.deadline then
+			if trip.stage == "return" then self:CancelBoxTrip(true, "กลับจากกล่องหมดเวลา • คืน Auto แล้ว")
+			else self.lootAttempts[trip.object] = {nextAt = os.clock() + 60}; self:ReturnFromBox("ไปกล่องหมดเวลา") end
+			return
+		end
+		if trip.stage == "return" then
+			self.pickupStatus = trip.result .. string.format(" • กลับจุดฟาร์ม %.0f studs", (root.Position - trip.origin).Magnitude)
+			if self:Walk(trip.origin, 5) then
+				self.lastBoxTrip = {opened = trip.opened == true, distance = (root.Position - trip.origin).Magnitude,
+					approachDistance = trip.approachDistance, startDistance = trip.startDistance, requests = trip.attempts,
+					result = trip.result, attributes = trip.object:GetAttributes()}
+				self:CancelBoxTrip(true, trip.result .. " • กลับจุดฟาร์มและคืน Auto แล้ว")
+			end
+			return
+		end
+		if self:LootIsGone(trip.object, "LootBox") then
+			if trip.attempts > 0 then
+				trip.opened = true
+				self:ConfirmPickup(trip.object, "LootBox")
+				self:ReturnFromBox("กล่องเปิด/เปลี่ยนสถานะแล้ว")
+			else self:ReturnFromBox("กล่องหายก่อนถึง") end
+			return
+		end
+		local distance = (root.Position - trip.object.Position).Magnitude
+		if trip.stage == "approach" then
+			trip.walkStarted = true
+			self.pickupStatus = string.format("เดินไปเปิด %s • %.0f studs", tostring(trip.object:GetAttribute("Label") or trip.object.Name), distance)
+			if self:Walk(trip.object.Position, 5) then
+				trip.stage, trip.deadline, trip.approachDistance = "open", os.clock() + 6, distance
+			end
+			return
+		end
+		if distance > 7 then self:ReturnFromBox("กล่องอยู่นอกระยะเปิด"); return end
+		local event = remote("OpenLootBox")
+		if not event then self:ReturnFromBox("ไม่พบระบบเปิดกล่องของเกม"); return end
+		if trip.attempts < 3 and os.clock() >= (trip.nextRequestAt or 0) then
+			trip.attempts += 1
+			trip.nextRequestAt = os.clock() + 1
+			local prompt = trip.object:FindFirstChild("OpenPrompt")
+			if not prompt and trip.object.Parent then
+				prompt = trip.object.Parent:QueryDescendants("ProximityPrompt#OpenPrompt")[1]
+			end
+			if prompt and prompt.Enabled then
+				local fire = rawget(env, "fireproximityprompt")
+				if type(fire) == "function" then fire(prompt) else
+					prompt:InputHoldBegin()
+					task.delay(prompt.HoldDuration + 0.1, function() if runtime.alive and self.lootTrip == trip and prompt.Parent then prompt:InputHoldEnd() end end)
+				end
+			else event:FireServer(trip.object) end
+			self.pickupStatus = "กดเปิดกล่องในระยะแล้ว • รอเกมยืนยัน"
+		end
+	end
+
 	function director:PickupNearby()
+		if self.lootTrip then self:StepBoxTrip(); return end
 		if not self.autoPickup then return end
 		local root, humanoid = self:Character()
 		if not root or not humanoid or humanoid.Health <= 0 then return end
-		local now, candidate, kind, nearest = serverNow(), nil, nil, math.huge
+		local now, candidate, kind, nearest, walkBox, walkDistance = serverNow(), nil, nil, math.huge, nil, math.huge
+		local busy = self.travel.active or self.session ~= nil or self.hop.busy or self.hop.pending or self.navBusy
 		for _, tag in ipairs({"LootBox", "Drop"}) do
 			for _, object in ipairs(CollectionService:GetTagged(tag)) do
 				if not object:IsA("BasePart") or not object.Parent or object:GetAttribute("LumiHiddenLocal") then continue end
 				local range = tag == "Drop" and (tonumber(GameConfig.DropPickupReach) or 7) or 7
 				local distance = (object.Position - root.Position).Magnitude
 				local attempt = self.lootAttempts[object]
-				if distance > range or distance >= nearest or (attempt and os.clock() < attempt.nextAt) then continue end
+				if attempt and (attempt.confirmed or os.clock() < (attempt.nextAt or 0)) then continue end
 				if not self:CanPickup(object:GetAttribute("OwnerUserId"), object:GetAttribute("FreeAt"), now,
 					tag == "Drop" and (tonumber(GameConfig.DropPickupDelay) or 0) or 0, tonumber(GameConfig.DropOwnerTime) or 15) then continue end
-				if tag == "LootBox" and object:GetAttribute("Opened") == true then continue end
-				candidate, kind, nearest = object, tag, distance
+				if self:LootIsGone(object, tag) then continue end
+				if tag == "LootBox" and distance < walkDistance and os.clock() >= (self.boxSearchAfter or 0)
+					and self:CanWalkToBox(distance, object.Position.Y - root.Position.Y, busy, player:GetAttribute("AutoOn")) then
+					walkBox, walkDistance = object, distance
+				end
+				if distance <= range and distance < nearest then candidate, kind, nearest = object, tag, distance end
 			end
 		end
-		if not candidate then return end
+		if walkBox and kind ~= "LootBox" then self:StartBoxTrip(walkBox); return end
+		if not candidate then
+			if walkBox then self:StartBoxTrip(walkBox) end
+			return
+		end
 		local event = remote(kind == "LootBox" and "OpenLootBox" or "PickupDrop")
 		if not event then return end
 		local attempt = self.lootAttempts[candidate] or {count = 0}
@@ -1740,10 +1874,8 @@ do
 		if kind == "LootBox" then event:FireServer(candidate) else event:FireServer() end
 		self.pickupStatus = kind == "LootBox" and "ส่งเปิดกล่อง E ในระยะแล้ว" or "ส่งเก็บของในระยะแล้ว"
 		task.delay(0.8, function()
-			if runtime.alive and (not candidate.Parent or not CollectionService:HasTag(candidate, kind) or candidate:GetAttribute("Opened") == true) then
-				self.pickupConfirmed = (self.pickupConfirmed or 0) + 1
-				if kind == "LootBox" then self.boxesOpened = (self.boxesOpened or 0) + 1 else self.dropsPicked = (self.dropsPicked or 0) + 1 end
-				self.pickupStatus = "เก็บ/เปิดแล้ว " .. self.pickupConfirmed .. " ครั้ง (ตรวจจากวัตถุเปลี่ยนสถานะ)"
+			if runtime.alive and self:LootIsGone(candidate, kind) then
+				self:ConfirmPickup(candidate, kind)
 			end
 		end)
 	end
@@ -1946,7 +2078,7 @@ do
 		local token = self.navToken
 		task.spawn(function()
 			local function active()
-				return runtime.alive and token == self.navToken and (self.enabled or self.travel.active)
+				return runtime.alive and token == self.navToken and (self.enabled or self.travel.active or self.lootTrip ~= nil)
 					and root.Parent and humanoid.Health > 0
 			end
 			local ok, message = pcall(function()
@@ -2063,6 +2195,7 @@ do
 	end
 
 	function director:CancelTrip()
+		if self.lootTrip then self:CancelBoxTrip(true) end
 		self.travel.token += 1
 		self.travel.active, self.travel.completed = false, false
 		self:CancelNavigation()
@@ -2087,7 +2220,7 @@ do
 		local root = self:Character()
 		if not root then travel.status = "รอตัวละครเกิดก่อน"; return false end
 		if workspace:GetAttribute("DungeonId") ~= nil then travel.status = "ใช้ปุ่มออกดันของเกมก่อนเดินทาง"; return false end
-		local nativeWasOn = player:GetAttribute("AutoOn") == true
+		local nativeWasOn = self.lootTrip and self.lootTrip.native or player:GetAttribute("AutoOn") == true
 		if not internal and self.enabled then self:SetEnabled(false) end
 		self:CancelTrip()
 		if not returning and not internal then travel.bookmark = {zone = self:CurrentZone(), position = root.Position, auto = nativeWasOn} end
@@ -2286,6 +2419,7 @@ do
 
 	function director:SetEnabled(value)
 		if value == self.enabled then return end
+		if self.lootTrip then self:CancelBoxTrip(true) end
 		if value then
 			if self.travel.active then self:CancelTrip() end
 			if not self:SaveHome() then return end
@@ -2469,6 +2603,7 @@ end
 
 	function director:Tick()
 		if not self.enabled then return end
+		if self.lootTrip then self.phase, self.detail = "กำลังเก็บกล่อง", self.pickupStatus; return end
 		if self.resumeReadyAt and os.clock() < self.resumeReadyAt then return end
 		local root, humanoid = self:Character()
 		if not root or not humanoid or humanoid.Health <= 0 then
@@ -2763,7 +2898,7 @@ end
 		while runtime.alive do
 			local ok, message = pcall(director.PickupNearby, director)
 			if not ok then director.pickupStatus = "เก็บของไม่สำเร็จ: " .. displayError(message) end
-			task.wait(0.4)
+			task.wait(0.15)
 		end
 	end)
 end
@@ -2901,6 +3036,7 @@ end)
 
 function runtime.Destroy()
 	if not runtime.alive then return end
+	if director.lootTrip then pcall(function() director:CancelBoxTrip(true) end) end
 	if director.enabled then pcall(function() director:SetEnabled(false) end) end
 	if director.travel.active then pcall(function() director:CancelTrip() end) end
 	if director.observer then director.observer:Disconnect() end

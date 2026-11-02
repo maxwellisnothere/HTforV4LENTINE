@@ -1,5 +1,18 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.1-box-walk — 2026-11-02
+
+The earlier pickup helper only acted inside E reach. It now actively walks to tagged loot boxes within 70 studs while native Auto is running, pauses native movement, opens through the real E prompt, returns to its captured departure point and restores Auto. It keeps the movement owner separate from boss/warp/dungeon trips, rejects different floors, supports cancellation and stops blocked/expired routes. The game's `OpenTitle` attribute now confirms the box result; the previous removal-only detection could miss a successful opening while its animation was still present.
+
+Verified with an actual spawned `LootBox_relic_box`:
+
+- Automatic selection at **15.50 studs**, beyond E reach.
+- Walked to **3.20 studs**, then sent **one** opening request through the box prompt.
+- Server replicated **OpenTitle = LUCKY DROP!** and its item-drop buff description; the box then disappeared. This is a confirmed opening, not merely a queued request.
+- Returned to **2.33 studs** from the departure position and restored native Auto to **ON**.
+- The box's ownership interval was respected before collection.
+- **59/59 regression checks** pass, including walk eligibility, movement priority, radius/height limits, cancellation/restoration, retained return origin and deduplicated confirmation, plus the previous 52 checks. Main script has no recorded runtime error. Endpoint/artwork checks also pass.
+
 ## Version 3.3.0-boss-sustain — 2026-11-02
 
 The fixed five-potion retreat and three-minute deadline have been replaced with user-controlled HP threshold, potion slot, per-boss use budget, retreat HP after resources are exhausted, and optional fight duration. The game accepts HP auto-drink thresholds up to 90% in steps of 5. Budget tracking accumulates inventory decreases separately for each HP potion and disables native HP auto-drinking at the cap. Healthy players keep fighting after the cap; low HP can recover while selected potions remain in budget. Stop/home restore the user's previous game potion slot and threshold.

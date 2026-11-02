@@ -341,4 +341,50 @@ test("inventory gains do not refund an already consumed potion budget", function
 	assert(fake.session.potionsUsed == 12)
 end)
 
+test("a box beyond E reach can request a walk within farming radius", function()
+	assert(manager:CanWalkToBox(25, 0, false, true))
+	assert(manager:CanWalkToBox(69, 3, false, true))
+end)
+
+test("box walks never steal boss or travel movement", function()
+	assert(not manager:CanWalkToBox(25, 0, true, true))
+end)
+
+test("box walk respects radius height and native Auto pause", function()
+	assert(not manager:CanWalkToBox(80, 0, false, true))
+	assert(not manager:CanWalkToBox(25, 20, false, true))
+	assert(not manager:CanWalkToBox(25, 0, false, false))
+	assert(not manager:CanWalkToBox(5, 0, false, true))
+end)
+
+test("cancelled box trip releases its path and restores previous Auto", function()
+	local cancelled, native
+	local fake = {lootTrip = {native = true}, CancelNavigation = function() cancelled = true end,
+		Character = function() return nil end, SetNativeAuto = function(_, v) native = v end}
+	manager.CancelBoxTrip(fake, true, "cancelled")
+	assert(fake.lootTrip == nil and cancelled and native == true)
+end)
+
+test("yielding box trip to manual travel cannot restart native Auto", function()
+	local fake = {lootTrip = {native = true}, CancelNavigation = function() end,
+		Character = function() return nil end, SetNativeAuto = function() error("should remain paused") end}
+	manager.CancelBoxTrip(fake, false)
+	assert(fake.lootTrip == nil)
+end)
+
+test("box return keeps the captured farm origin", function()
+	local origin = Vector3.new(12, 60, -700)
+	local fake = {lootTrip = {origin = origin, stage = "approach"}, CancelNavigation = function() end}
+	manager.ReturnFromBox(fake, "opened")
+	assert(fake.lootTrip.stage == "return" and fake.lootTrip.origin == origin and fake.lootTrip.result == "opened")
+end)
+
+test("box state confirmation is counted only once", function()
+	local object = {}
+	local fake = {lootAttempts = {}}
+	manager.ConfirmPickup(fake, object, "LootBox")
+	manager.ConfirmPickup(fake, object, "LootBox")
+	assert(fake.boxesOpened == 1 and fake.pickupConfirmed == 1)
+end)
+
 getgenv().__CodexFarmDirectorTests = results
