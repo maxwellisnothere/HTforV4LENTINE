@@ -1670,6 +1670,7 @@ do
 		session.potionSnapshot = snapshot
 		if session.potionsUsed >= session.potionBudget and not session.potionCapped then
 			session.potionCapped = true
+			session.potionSentAt = os.clock()
 			self:SetHealthAuto(0)
 		end
 	end

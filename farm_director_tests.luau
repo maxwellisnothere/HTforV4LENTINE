@@ -215,10 +215,10 @@ test("boss death waits for loot then transitions to completion", function()
 end)
 
 test("Stop cancels pending hops without touching idle native farming", function()
-	local fake = {enabled = true, hop = {token = 7, busy = true}, travel = {active = false},
+	local fake = {enabled = true, hopMode = true, hop = {token = 7, busy = true}, travel = {active = false},
 		CancelNavigation = function() end, Watch = function() end}
 	manager.SetEnabled(fake, false)
-	assert(not fake.enabled and not fake.hop.busy and fake.hop.token == 8)
+	assert(not fake.enabled and not fake.hopMode and not fake.hop.busy and fake.hop.token == 8)
 end)
 
 test("do not request or charge a warp back to the source pillar", function()
