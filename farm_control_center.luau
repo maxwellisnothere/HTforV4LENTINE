@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.2.0-boss-assistant"}
+local runtime = {alive = true, connections = {}, version = "3.3.0-boss-sustain"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -573,6 +573,8 @@ local state = {
 local director = {
 	enabled = false, huntBosses = true, runDungeons = false,
 	selectedBoss = "terra_colossus", hopMode = false, sellTrip = false,
+	healAt = 70, potionBudget = 50, retreatAt = 25, potionChoice = "current", fightMinutes = 0,
+	autoPickup = true, pickupStatus = "รอกล่องและของดรอปใกล้ตัว", lootAttempts = setmetatable({}, {__mode = "k"}),
 	hop = {visited = {}, count = 0, max = 10, nextAt = 0},
 	equipBest = true, travel = {active = false, token = 0, status = "เลือกด่านที่ต้องการ", bookmark = previousDirector and previousDirector.travel and previousDirector.travel.bookmark},
 	phase = "พร้อมเฝ้าบอส", detail = "ยืนจุดฟาร์ม เปิด Auto ของเกม แล้วกดเริ่มเฝ้าบอส",
@@ -583,10 +585,21 @@ local director = {
 	bossSpawnKeys = previousDirector and table.clone(previousDirector.bossSpawnKeys or {}) or {},
 }
 runtime.manager = director
+for _, key in ipairs({"healAt", "potionBudget", "retreatAt", "potionChoice", "fightMinutes", "autoPickup", "selectedBoss"}) do
+	if previousDirector and previousDirector[key] ~= nil then director[key] = previousDirector[key] end
+end
 
 local function menuFire(name, value)
 	local event = player:FindFirstChild("LumiMenuToggle")
-	if event and event:IsA("BindableEvent") then event:Fire(name, value); return true end
+	if event and event:IsA("BindableEvent") then
+		local setIdentity = rawget(env, "setthreadidentity") or rawget(env, "setidentity")
+		local getIdentity = rawget(env, "getthreadidentity") or rawget(env, "getidentity")
+		local original = type(getIdentity) == "function" and getIdentity() or nil
+		if original and type(setIdentity) == "function" then setIdentity(2) end
+		local ok = pcall(event.Fire, event, name, value)
+		if original and type(setIdentity) == "function" then setIdentity(original) end
+		return ok
+	end
 	return false
 end
 
@@ -679,7 +692,7 @@ do
 			button.TextColor3 = director[key] and COLORS.Bg or COLORS.Sub
 		end
 		track(button.MouseButton1Click:Connect(function()
-			if key == "hopMode" and director.enabled then toast("หยุดเฝ้าบอสก่อนเปลี่ยนโหมด", "info"); return end
+			if key == "hopMode" then director:SetHopMode(not director.hopMode); refresh(); return end
 			director[key] = not director[key]; refresh()
 		end))
 		table.insert(refreshers, refresh)
@@ -690,6 +703,45 @@ do
 	option("กลับเมืองขาย Junk แล้วกลับจุดเดิม", "sellTrip")
 	option("ล่าบอสข้ามเซิร์ฟ (สูงสุด 10 ครั้ง/รอบ)", "hopMode")
 	option("ใส่อุปกรณ์ที่ CP สูงสุดอัตโนมัติ", "equipBest")
+	option("เปิดกล่อง E และเก็บของใกล้ตัว", "autoPickup")
+	local sustain = makeCard(playPage, 224)
+	sustain.Name = "BossSustain"
+	titleLabel(sustain, "ยาและงบต่อบอส", "ตั้งก่อนออกทริป • งบ 0 = ไม่ใช้ยา • เวลา 0 = ไม่จำกัด")
+	local function numberSetting(label, key, minimum, maximum, step, y)
+		new("TextLabel", {Position = UDim2.fromOffset(12, y), Size = UDim2.new(1, -142, 0, 28),
+			BackgroundTransparency = 1, Text = label, TextColor3 = COLORS.Text, TextSize = 13,
+			Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left}, sustain)
+		local input = new("TextBox", {Name = key, Position = UDim2.new(1, -124, 0, y), Size = UDim2.fromOffset(110, 28),
+			BackgroundColor3 = COLORS.Card2, TextColor3 = COLORS.Cyan, BorderSizePixel = 0, ClearTextOnFocus = false,
+			Text = tostring(director[key]), TextSize = 14, Font = Enum.Font.GothamBold}, sustain)
+		corner(input, 6)
+		track(input.FocusLost:Connect(function()
+			if director.session then toast("จบทริปก่อนเปลี่ยนค่าการต่อสู้", "info") else
+				local value = tonumber(input.Text)
+				if value and value == value then director[key] = math.clamp(math.floor(value / step + 0.5) * step, minimum, maximum) end
+			end
+			input.Text = tostring(director[key])
+		end))
+		table.insert(refreshers, function() if not input:IsFocused() then input.Text = tostring(director[key]) end end)
+	end
+	numberSetting("ใช้ยาเมื่อ HP ต่ำกว่า % (เกมสูงสุด 90)", "healAt", 5, 90, 5, 60)
+	numberSetting("ยอมใช้ยาสูงสุดกี่ขวดต่อบอส", "potionBudget", 0, 9999, 1, 92)
+	numberSetting("ยาหมดงบ/หมดตัว และ HP ต่ำกว่า % ให้ถอย", "retreatAt", 1, 80, 1, 124)
+	numberSetting("เวลาต่อบอส (นาที, 0 = สู้ต่อเรื่อย ๆ)", "fightMinutes", 0, 60, 1, 156)
+	local choosePotion = new("TextButton", {Name = "PotionChoice", Position = UDim2.fromOffset(12, 190),
+		Size = UDim2.new(1, -26, 0, 26), BackgroundColor3 = COLORS.Card2, BorderSizePixel = 0,
+		Text = "", TextSize = 13, TextColor3 = COLORS.Cyan, Font = Enum.Font.GothamBold}, sustain)
+	corner(choosePotion, 6)
+	local potionChoices = {"current", "red_potion", "red_potion_m", "white_potion"}
+	local function potionText()
+		choosePotion.Text = "ยา: " .. (director.potionChoice == "current" and "ตามช่องยาที่ตั้งไว้ในเกม" or tostring((ItemData[director.potionChoice] or {}).Name or director.potionChoice)) .. "  ›"
+	end
+	track(choosePotion.MouseButton1Click:Connect(function()
+		if director.session then toast("จบทริปก่อนเปลี่ยนยา", "info"); return end
+		local index = table.find(potionChoices, director.potionChoice) or 1
+		director.potionChoice = potionChoices[index % #potionChoices + 1]; potionText()
+	end))
+	table.insert(refreshers, potionText); potionText()
 	local info = makeCard(playPage, 164)
 	info.Name = "Telemetry"
 	director.ui.stats = new("TextLabel", {
@@ -1579,10 +1631,131 @@ do
 		return count
 	end
 
-	function director:RetreatReason(healthFraction, plan, potionStart, potionNow)
-		if healthFraction < 0.35 then return "เลือดต่ำ" end
-		if plan and plan.boss and potionStart and potionNow and potionStart - potionNow >= 5 then return "ใช้ยาครบ 5 ขวดแล้ว" end
+	function director:RetreatReason(healthFraction, plan, used, available, budget, retreatPercent)
+		if not plan or not plan.boss then return healthFraction < 0.35 and "เลือดต่ำ" or nil end
+		budget = budget or self.potionBudget or 50
+		retreatPercent = retreatPercent or self.retreatAt or 25
+		local exhausted = (used or 0) >= budget
+		if (exhausted or (available or 0) <= 0) and healthFraction * 100 <= retreatPercent then
+			return exhausted and ("ใช้ยาครบงบ " .. budget .. " ขวด และเลือดต่ำ") or "ยาที่เลือกหมดและเลือดต่ำ"
+		end
 		return nil
+	end
+
+	function director:HealingSnapshot()
+		local items, out = decodeAttribute("ItemsJson"), {}
+		for id, definition in pairs(ItemData) do
+			if type(definition) == "table" and definition.Kind == "usable"
+				and ((tonumber(definition.HealMin) or 0) > 0 or (tonumber(definition.HealPercent) or 0) > 0) then out[id] = itemCount(items, id) end
+		end
+		return out
+	end
+
+	function director:ConsumedPotions(before, after)
+		local used = 0
+		for id, value in pairs(before or {}) do used += math.max(0, value - (after[id] or 0)) end
+		return used
+	end
+
+	function director:SetHealthAuto(percent)
+		local event = remote("SetPotionAuto")
+		if event then event:FireServer("hp", percent) end
+	end
+
+	function director:UpdatePotionUsage()
+		local session = self.session
+		if not session or session.kind ~= "boss" or not session.potionChanged or session.restored then return end
+		local snapshot = self:HealingSnapshot()
+		session.potionsUsed = (session.potionsUsed or 0) + self:ConsumedPotions(session.potionSnapshot, snapshot)
+		session.potionSnapshot = snapshot
+		if session.potionsUsed >= session.potionBudget and not session.potionCapped then
+			session.potionCapped = true
+			self:SetHealthAuto(0)
+		end
+	end
+
+	function director:PreparePotions(session)
+		if session.potionChanged then return true end
+		local auto, slot = remote("SetPotionAuto"), remote("SetPotionSlot")
+		if not auto or not slot then return false end
+		session.potionPercent = tonumber(player:GetAttribute("PotionHpPercent")) or 0
+		session.potionSlot = player:GetAttribute("PotionHpNow")
+		session.selectedPotion = self.potionChoice == "current" and session.potionSlot or self.potionChoice
+		session.potionBudget, session.retreatPercent = self.potionBudget, self.retreatAt
+		session.healAt, session.fightMinutes = self.healAt, self.fightMinutes
+		session.potionsUsed, session.potionSnapshot = 0, self:HealingSnapshot()
+		session.potionChanged, session.potionSentAt = true, os.clock()
+		if self.potionChoice ~= "current" then slot:FireServer("hp", self.potionChoice) end
+		auto:FireServer("hp", session.potionBudget > 0 and session.healAt or 0)
+		session.potionCapped = session.potionBudget == 0
+		return true
+	end
+
+	track(player:GetAttributeChangedSignal("ItemsJson"):Connect(function() director:UpdatePotionUsage() end))
+
+	function director:BossPresence(alive, nextAt, now, model)
+		if model and model.Parent and (tonumber(model:GetAttribute("HP")) or 0) > 0 then return "alive", 0 end
+		local remaining = math.max(0, (tonumber(nextAt) or 0) - now)
+		if remaining > 0 then return "countdown", remaining end
+		-- No timer is not proof of death; enter the room and inspect it.
+		return "scout", 0
+	end
+
+	function director:CurrentBossPresence(boss)
+		return self:BossPresence(workspace:GetAttribute("BossAlive_" .. boss.id), workspace:GetAttribute("BossNext_" .. boss.id), serverNow(), self:Monster(boss.id))
+	end
+
+	function director:CanPickup(owner, freeAt, now, delay, ownerTime)
+		freeAt = tonumber(freeAt) or 0
+		if freeAt > 0 and now - (freeAt - ownerTime) < delay then return false end
+		return not owner or owner == 0 or owner == player.UserId or freeAt <= now
+	end
+
+	function director:PickupNearby()
+		if not self.autoPickup then return end
+		local root, humanoid = self:Character()
+		if not root or not humanoid or humanoid.Health <= 0 then return end
+		local now, candidate, kind, nearest = serverNow(), nil, nil, math.huge
+		for _, tag in ipairs({"LootBox", "Drop"}) do
+			for _, object in ipairs(CollectionService:GetTagged(tag)) do
+				if not object:IsA("BasePart") or not object.Parent or object:GetAttribute("LumiHiddenLocal") then continue end
+				local range = tag == "Drop" and (tonumber(GameConfig.DropPickupReach) or 7) or 7
+				local distance = (object.Position - root.Position).Magnitude
+				local attempt = self.lootAttempts[object]
+				if distance > range or distance >= nearest or (attempt and os.clock() < attempt.nextAt) then continue end
+				if not self:CanPickup(object:GetAttribute("OwnerUserId"), object:GetAttribute("FreeAt"), now,
+					tag == "Drop" and (tonumber(GameConfig.DropPickupDelay) or 0) or 0, tonumber(GameConfig.DropOwnerTime) or 15) then continue end
+				if tag == "LootBox" and object:GetAttribute("Opened") == true then continue end
+				candidate, kind, nearest = object, tag, distance
+			end
+		end
+		if not candidate then return end
+		local event = remote(kind == "LootBox" and "OpenLootBox" or "PickupDrop")
+		if not event then return end
+		local attempt = self.lootAttempts[candidate] or {count = 0}
+		attempt.count += 1
+		attempt.nextAt = os.clock() + (attempt.count % 3 == 0 and 15 or 1)
+		self.lootAttempts[candidate] = attempt
+		if kind == "LootBox" then event:FireServer(candidate) else event:FireServer() end
+		self.pickupStatus = kind == "LootBox" and "ส่งเปิดกล่อง E ในระยะแล้ว" or "ส่งเก็บของในระยะแล้ว"
+		task.delay(0.8, function()
+			if runtime.alive and (not candidate.Parent or not CollectionService:HasTag(candidate, kind) or candidate:GetAttribute("Opened") == true) then
+				self.pickupConfirmed = (self.pickupConfirmed or 0) + 1
+				if kind == "LootBox" then self.boxesOpened = (self.boxesOpened or 0) + 1 else self.dropsPicked = (self.dropsPicked or 0) + 1 end
+				self.pickupStatus = "เก็บ/เปิดแล้ว " .. self.pickupConfirmed .. " ครั้ง (ตรวจจากวัตถุเปลี่ยนสถานะ)"
+			end
+		end)
+	end
+
+	function director:SetHopMode(value)
+		if self.session and self.session.stage ~= "hop" then toast("จบทริปหรือกดหยุดก่อนเปลี่ยนโหมดข้ามเซิร์ฟ", "info"); return end
+		self.hopMode = value
+		if not value then
+			self.hop.token = (self.hop.token or 0) + 1
+			self.hop.busy = false
+			if self.session then self:BeginReturn("ปิดโหมดข้ามเซิร์ฟ กลับจุดเดิม") end
+		elseif not self.enabled then self:SetEnabled(true)
+		else self.hop.nextAt = math.min(self.hop.nextAt or 0, os.clock() + 3) end
 	end
 
 	function director:CanAccess(id)
@@ -1739,14 +1912,15 @@ do
 		if not boss then return nil end
 		local definition = MonsterData[boss.id] or {}
 		local _, humanoid = self:Character()
-		if not humanoid or humanoid.Health / math.max(1, humanoid.MaxHealth) < 0.7 then return nil end
+		if not humanoid or humanoid.Health <= 0 then return nil end
 		if (definition.Level or math.huge) > (player:GetAttribute("Level") or 1) or not self:CanAccess(boss.map) then return nil end
-		if workspace:GetAttribute("BossAlive_" .. boss.id) ~= true then return nil end
+		local presence = self:CurrentBossPresence(boss)
+		if presence == "countdown" then return nil end
 		local model = self:Monster(boss.id)
-		local spawnKey = model and model:GetAttribute("SpawnAt") or self.bossSpawnKeys[boss.id] or "alive"
+		local spawnKey = model and model:GetAttribute("SpawnAt") or self.bossSpawnKeys[boss.id] or "scout"
 		self.bossSpawnKeys[boss.id] = spawnKey
 		if (self.cooldowns[boss.id] or 0) > os.clock() or self.failedBossSpawns[boss.id] == spawnKey then return nil end
-		return {id = boss.id, zone = boss.map, name = boss.name, level = definition.Level, boss = true, model = model, spawnKey = spawnKey}
+		return {id = boss.id, zone = boss.map, name = boss.name, level = definition.Level, boss = true, model = model, spawnKey = spawnKey, scouting = presence == "scout"}
 	end
 
 	function director:CancelNavigation()
@@ -1930,6 +2104,13 @@ do
 					while alive() do
 						local current, humanoid = self:Character()
 						if not current or not humanoid or humanoid.Health <= 0 then error("ตัวละครเสียชีวิตระหว่างเดินทาง") end
+						if player:GetAttribute("AutoOn") == true then
+							setAutoFarm(false)
+							self:CancelNavigation()
+							travel.status = "พัก Auto ของเกมก่อนเดินทางต่อ"
+							task.wait(0.2)
+							continue
+						end
 						if self.navError then error(self.navError) end
 						travel.status = label .. string.format(" • %.0f studs", (current.Position - goal).Magnitude)
 						if self:Walk(goal, tolerance or 7) then return true end
@@ -2088,11 +2269,18 @@ do
 			.. "\nยืนจุดฟาร์ม เปิด Auto ของเกม แล้วกดเริ่มเฝ้าบอส"
 	end
 
-	function director:RestoreSettings(session)
-		if not session or session.restored then return end
-		if session.botChanged and remote("SetBotSettings") then remote("SetBotSettings"):FireServer(session.bot) end
-		if session.skillChanged then setRemoteBoolean("SetAutoSkill", session.autoSkill) end
-		session.restored, session.restoreAt = true, os.clock()
+	function director:RestoreSettings(session, deferPotions)
+		if not session then return end
+		if not session.restored then
+			if session.botChanged and remote("SetBotSettings") then remote("SetBotSettings"):FireServer(session.bot) end
+			if session.skillChanged then setRemoteBoolean("SetAutoSkill", session.autoSkill) end
+			session.restored, session.restoreAt = true, os.clock()
+		end
+		if not deferPotions and session.potionChanged and not session.potionRestored then
+			if remote("SetPotionSlot") then remote("SetPotionSlot"):FireServer("hp", session.potionSlot) end
+			if remote("SetPotionAuto") then remote("SetPotionAuto"):FireServer("hp", session.potionPercent) end
+			session.potionRestored, session.potionRestoreAt = true, os.clock()
+		end
 	end
 
 	function director:SetEnabled(value)
@@ -2105,6 +2293,7 @@ do
 			self.startedAt, self.startSilver = os.clock(), tonumber(player:GetAttribute("Silver")) or 0
 			self.startTotalExp = self:TotalExp(player:GetAttribute("Level"), player:GetAttribute("Exp"))
 			self.kills, self.plan, self.configuredId = 0, nil, nil
+			self.failedBossSpawns[self.selectedBoss], self.cooldowns[self.selectedBoss] = nil, nil
 			self.phase, self.detail = "กำลังเฝ้าบอส", "ให้ Auto ของเกมฟาร์มตามเดิม • จำจุดกลับแล้ว"
 		else
 			self.enabled = false
@@ -2156,7 +2345,7 @@ do
 		self:Watch(nil)
 		self:CancelNavigation()
 		self:SetNativeAuto(false)
-		self:RestoreSettings(session)
+		self:RestoreSettings(session, true)
 		session.stage = "return"
 		self.plan, self.configuredId = nil, nil
 		if not self.home or not self:TravelTo(self.home.zone, self.home.position, true, true) then
@@ -2165,13 +2354,15 @@ do
 		end
 	end
 
-	function director:FinishBoss(reason, killed)
+	function director:FinishBoss(reason, killed, missing)
 		local plan = self.plan
 		if plan then
 			self.failedBossSpawns[plan.id] = plan.spawnKey
 			self.cooldowns[plan.id] = os.clock() + 60
 		end
-		if killed and self.hopMode then
+		self.lastBossResult = {reason = reason, killed = killed == true, missing = missing == true,
+			potions = self.session and self.session.potionsUsed or 0}
+		if (killed or missing) and self.hopMode then
 			self.session.stage = "hop"
 			self.lastDecision = reason
 			self:SetNativeAuto(false)
@@ -2179,7 +2370,10 @@ do
 			self:Watch(nil)
 			self.plan = nil
 			self.hop.nextAt = math.max(self.hop.nextAt or 0, os.clock() + 3)
-		else self:BeginReturn(reason) end
+		else
+			if self.hopMode and self.session then self.session.stopAfterReturn = true end
+			self:BeginReturn(reason)
+		end
 	end
 
 	function director:PickServer(data, visited, current, now)
@@ -2204,7 +2398,9 @@ do
 		local payload = {version = 1, user = player.UserId, place = game.PlaceId, target = target, at = os.time(),
 			selected = self.selectedBoss, count = self.hop.count + 1, max = self.hop.max, visited = self.hop.visited,
 			home = {zone = home.zone, x = home.position.X, y = home.position.Y, z = home.position.Z},
-			bot = self.homeBot, native = self.homeAuto, equip = self.equipBest}
+			bot = self.homeBot, native = self.homeAuto, equip = self.equipBest,
+			sustain = {healAt = self.healAt, potionBudget = self.potionBudget, retreatAt = self.retreatAt,
+				potionChoice = self.potionChoice, fightMinutes = self.fightMinutes, autoPickup = self.autoPickup}}
 		local encoded = HttpService:JSONEncode(payload)
 		local code = string.format([=[
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -2288,11 +2484,21 @@ end
 			self.hop.pending, self.hop.busy, self.hop.nextAt = nil, false, os.clock() + 60
 			self.lastDecision = "ย้ายเซิร์ฟหมดเวลา พักก่อนลองใหม่"
 		end
+		if not session and (self.hop.pending or self.hop.busy) then
+			self.phase, self.detail = "กำลังย้ายเซิร์ฟ", "กำลังค้นหา/เชื่อมต่อเซิร์ฟใหม่ รอ Roblox"
+			return
+		end
 		if session and session.stage == "return" then
 			if not self.travel.completed then
 				local reason = self.travel.status; self:SetEnabled(false); self.detail = reason; return
 			end
 			if os.clock() - (session.restoreAt or 0) < 1 then return end
+			self:RestoreSettings(session)
+			if session.potionChanged and (player:GetAttribute("PotionHpPercent") ~= session.potionPercent
+				or player:GetAttribute("PotionHpNow") ~= session.potionSlot) then
+				if os.clock() - (session.potionRestoreAt or os.clock()) > 8 then self:SetEnabled(false); self.detail = "คืนค่าช่องยาของเกมไม่สำเร็จ กรุณาตรวจช่องยา" end
+				return
+			end
 			-- Wait for the original target filter before resuming native combat.
 			if session.botChanged then
 				local same = self:SameSettings(decodeAttribute("BotJson"), session.bot)
@@ -2313,7 +2519,8 @@ end
 		end
 		if session and session.stage == "hop" then
 			if not self.hopMode then self:BeginReturn("กลับจุดเดิม"); return end
-			self.phase, self.detail = "เตรียมหาบอสเซิร์ฟถัดไป", "รอคูลดาวน์ย้ายเซิร์ฟ"
+			self.phase = "เตรียมหาบอสเซิร์ฟถัดไป"
+			self.detail = self.hop.pending and "ส่งคำขอย้ายแล้ว รอ Roblox" or string.format("รอย้ายเซิร์ฟอีก %.0f วินาที • %s", math.max(0, self.hop.nextAt - os.clock()), self.lastDecision or "")
 			self:HopServer(); return
 		end
 		if session and session.stage == "outbound" then
@@ -2356,22 +2563,33 @@ end
 				self.bossSpawnKeys[plan.id] = plan.spawnKey
 				self:Watch(model)
 			end
+			if model and (tonumber(model:GetAttribute("HP")) or 0) > 0 then session.seenBoss = true end
+			local presence = self:CurrentBossPresence({id = plan.id})
 			local dead = (model and (tonumber(model:GetAttribute("HP")) or 1) <= 0)
-				or workspace:GetAttribute("BossAlive_" .. plan.id) == false
+				or (session.seenBoss and presence == "countdown")
 			if dead then
 				self.bossLootUntil = self.bossLootUntil or os.clock() + 5
 				self.phase, self.detail = "บอสตายแล้ว รอเก็บของ", "ให้ Auto Loot เก็บของ 5 วินาที"
 				if os.clock() >= self.bossLootUntil then self:FinishBoss("บอสตายแล้ว", true) end
 				return
 			end
-			local retreat = self:RetreatReason(humanoid.Health / math.max(1, humanoid.MaxHealth), plan, self.bossPotionStart, self:HealingSupply())
-			if retreat then self:FinishBoss(retreat, false); return end
-			if os.clock() - session.arrivedAt > 180 then self:FinishBoss("ต่อสู้นานเกิน 3 นาที", false); return end
 			if not model or not model.PrimaryPart then
-				self.phase, self.detail = "รอบอสโหลด", plan.name
-				if os.clock() - session.arrivedAt > 20 then self:FinishBoss("ไม่พบบอสที่จุดหมาย", false) end
+				self.phase, self.detail = "สำรวจห้องบอส", plan.name .. " • ตรวจตัวบอสและเวลานับถอยหลัง"
+				if presence == "countdown" or os.clock() - session.arrivedAt > 18 then self:FinishBoss("สำรวจแล้วไม่พบบอสในเซิร์ฟนี้", false, true) end
 				return
 			end
+			if not self:PreparePotions(session) then self:FinishBoss("ตั้งระบบยาไม่ได้", false); return end
+			self:UpdatePotionUsage()
+			local expected = session.potionCapped and 0 or session.healAt
+			if player:GetAttribute("PotionHpPercent") ~= expected or player:GetAttribute("PotionHpNow") ~= session.selectedPotion then
+				self.phase, self.detail = "รอยืนยันช่องยา", "รอเกมยืนยันเปอร์เซ็นต์และชนิดยา"
+				if os.clock() - session.potionSentAt > 6 then self:FinishBoss("เกมไม่ยืนยันชนิดยา/เปอร์เซ็นต์ยา", false) end
+				return
+			end
+			local available = (session.potionSnapshot or {})[session.selectedPotion] or 0
+			local retreat = self:RetreatReason(humanoid.Health / math.max(1, humanoid.MaxHealth), plan, session.potionsUsed, available, session.potionBudget, session.retreatPercent)
+			if retreat then self:FinishBoss(retreat, false); return end
+			if session.fightMinutes > 0 and self.fightStarted and os.clock() - self.fightStarted > session.fightMinutes * 60 then self:FinishBoss("ครบเวลาต่อบอสที่ตั้งไว้", false); return end
 			session.botChanged = true
 			if not self:ConfigureTarget(plan.id) then self:FinishBoss("ตั้งตัวกรองบอสไม่ได้", false); return end
 			local settings, confirmed = decodeAttribute("BotJson"), true
@@ -2394,12 +2612,15 @@ end
 			if not session.skillChanged then session.skillChanged = true; setRemoteBoolean("SetAutoSkill", true) end
 			self.fightStarted = self.fightStarted or os.clock()
 			setAutoFarm(true)
-			self.phase, self.detail = "กำลังตี " .. plan.name, "HP บอส " .. comma(model:GetAttribute("HP")) .. " • ใช้ระบบต่อสู้ของเกม"
+			self.phase = "กำลังตี " .. plan.name
+			self.detail = string.format("HP บอส %s • ยาใช้ %d/%d ขวด • เหลือ %d\n%s", comma(model:GetAttribute("HP")), session.potionsUsed, session.potionBudget, available,
+				session.potionCapped and ("ครบงบยาแล้ว • สู้ต่อจน HP ≤ " .. session.retreatPercent .. "% จึงถอย") or ("ใช้ยาเมื่อ HP < " .. session.healAt .. "% • สู้ต่อได้ขณะยังมียาในงบ"))
 			return
 		end
 		local boss = self:SelectedDefinition()
 		local alive = boss and workspace:GetAttribute("BossAlive_" .. boss.id)
-		if boss and alive == false then self.failedBossSpawns[boss.id], self.bossSpawnKeys[boss.id] = nil, nil end
+		local presence = boss and self:CurrentBossPresence(boss)
+		if boss and presence == "countdown" then self.failedBossSpawns[boss.id], self.bossSpawnKeys[boss.id] = nil, nil end
 		local plan = self:SelectPlan()
 		if plan then self:BeginSession("boss", plan); return end
 		self.phase = "กำลังเฝ้าบอส"
@@ -2411,8 +2632,14 @@ end
 			if not allowed then self.detail ..= " • " .. tostring(reason)
 			elseif self.failedBossSpawns[boss.id] then self.detail ..= " • พักบอสเกิดรอบนี้" end
 		end
-		if self.hopMode and self.huntBosses and boss and alive == false and self:CanAccess(boss.map) then
-			self:HopServer(); return
+		if self.hopMode and self.huntBosses and boss and self:CanAccess(boss.map) then
+			if presence == "countdown" then
+				self.phase = "หาบอสเซิร์ฟถัดไป"
+				self.detail = string.format("บอสเซิร์ฟนี้ยังรอเกิด • ย้ายใน %.0f วินาที", math.max(0, self.hop.nextAt - os.clock()))
+				self:HopServer(); return
+			elseif self.failedBossSpawns[boss.id] then
+				self.detail ..= " • พักบอสนี้: ยา/เลือดไม่ไหว ให้ปรับงบแล้วเริ่มใหม่"
+			end
 		end
 		if not self.hopMode and self.runDungeons and self:DungeonStatus() and os.clock() - (self.lastDungeonAttempt or -600) >= 600 then
 			self.lastDungeonAttempt, self.dungeonTrip = os.clock(), true
@@ -2470,6 +2697,7 @@ end
 			button.BackgroundColor3 = id == self.selectedBoss and Color3.fromRGB(35, 78, 45) or COLORS.Card2
 		end
 		self.ui.note.Text ..= "\nAuto Equip: " .. (player:GetAttribute("AutoEquip") == true and "ON • เลือก CP สูงสุดโดยเกม" or "OFF / รอยืนยัน")
+		self.ui.note.Text ..= "\n" .. (self.autoPickup and self.pickupStatus or "เก็บกล่อง/ของ: OFF")
 		for _, node in ipairs(nodes) do
 			local minimum = tonumber(tostring(node.data.LevelText):match("%d+")) or math.huge
 			local allowed, reason = self:CanAccess(node.id)
@@ -2510,6 +2738,11 @@ end
 		director.startTotalExp = director:TotalExp(player:GetAttribute("Level"), player:GetAttribute("Exp"))
 		director.phase, director.detail = "ต่อจากเซิร์ฟเดิม", "รอข้อมูลบอสในเซิร์ฟนี้"
 		director.resumeReadyAt = os.clock() + 15
+		if type(resume.sustain) == "table" then
+			for _, key in ipairs({"healAt", "potionBudget", "retreatAt", "potionChoice", "fightMinutes", "autoPickup"}) do
+				if resume.sustain[key] ~= nil then director[key] = resume.sustain[key] end
+			end
+		end
 	end
 	director:RefreshUI()
 	task.spawn(function()
@@ -2522,6 +2755,13 @@ end
 				pcall(function() director:RefreshUI() end)
 			end
 			task.wait(0.5)
+		end
+	end)
+	task.spawn(function()
+		while runtime.alive do
+			local ok, message = pcall(director.PickupNearby, director)
+			if not ok then director.pickupStatus = "เก็บของไม่สำเร็จ: " .. displayError(message) end
+			task.wait(0.4)
 		end
 	end)
 end

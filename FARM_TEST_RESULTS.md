@@ -1,5 +1,22 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.0-boss-sustain — 2026-11-02
+
+The fixed five-potion retreat and three-minute deadline have been replaced with user-controlled HP threshold, potion slot, per-boss use budget, retreat HP after resources are exhausted, and optional fight duration. The game accepts HP auto-drink thresholds up to 90% in steps of 5. Budget tracking accumulates inventory decreases separately for each HP potion and disables native HP auto-drinking at the cap. Healthy players keep fighting after the cap; low HP can recover while selected potions remain in budget. Stop/home restore the user's previous game potion slot and threshold.
+
+Boss detection now uses a loaded living model first, a positive respawn countdown second, and room scouting when there is no countdown. An empty scouted room triggers hopping in hop mode. Turning on hop mode while stopped starts the assistant. Potion settings continue across hops. Cooldowns, pending connections and errors are visible. A resource failure returns home and stops that run.
+
+Nearby E actions open tagged LootBox parts and collect Drop parts within the game reach, with owner protection, pickup delay and throttled retries. Confirmation is reported from tag/parent/state changes rather than assuming a remote request succeeded. Native Auto still handles farm movement.
+
+Validation:
+
+- **52 policy/regression checks** cover healing with remaining budget, no-heal and exhausted-budget retreat, exact-cap auto-drink disable, per-type inventory accounting, scout/countdown/model precedence, empty-room hopping, hop-mode start, drop protection and previous travel/dungeon policies.
+- **Actual Gorilla King kill passed** with a Lv.35 character: HP **32,614 → 0**, configured Red Potion (M), HP threshold **90%**, budget **25**, observed use **17 potions**. This exceeded the old 5-potion limit and completed the fight. Loot delay, home return and original BotJson/potion/Auto restoration all passed. Original slot **red_potion** and threshold **50%** returned; native Auto was on as before. At return completion, distance to recorded home was **0.88 studs**.
+- During that run, nearby item/box state confirmations reached 26. Remote inspection identified actual `OpenLootBox` calls from the helper; these are separate from material pickup requests. Further per-kind counters are now included in runtime state.
+- Main script loaded without a runtime error. Worker routing and all 9 PNG asset tests passed.
+
+Inventory accounting observes net server updates: use and receipt of the exact same item in one update can conceal consumption. A native potion request already in flight may complete around the cap. No stronger claim of an atomic server-enforced budget is made. Full dungeon completion remains untested at this character level.
+
 ## Version 3.2.0-boss-assistant — 2026-11-02
 
 Customer feedback identified two travel bugs: destinations were rejected when their streamed Column was missing, and walking polled short waypoints at the slow director interval. The previous source-offset tolerance could also finish outside the actual pillar interaction distance. Travel now uses persistent model pivots, acknowledges `PillarOpen`, checks distance to the source itself, shares arrival tolerances and advances waypoints in a cancellable Heartbeat worker.
