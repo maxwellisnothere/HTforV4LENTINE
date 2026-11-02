@@ -78,4 +78,16 @@ test("boss potion budget does not interrupt normal monsters", function()
 	assert(manager:RetreatReason(0.9, {boss = false}, 50, 40) == nil)
 end)
 
+test("town uses the free official pillar route", function()
+	local id, cost = manager:TravelRoute("Town")
+	assert(id == "Town" and cost == 0)
+end)
+test("unknown pillars are not unlocked", function()
+	assert(not manager:PillarAvailable("unknown_test_pillar"))
+end)
+test("unknown destinations do not get a guessed warp route", function()
+	local id, cost = manager:TravelRoute("unknown_test_map")
+	assert(id == nil and cost == 0)
+end)
+
 getgenv().__CodexFarmDirectorTests = results

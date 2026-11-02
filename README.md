@@ -12,7 +12,7 @@ The loader installs the supplied logo/icons into `duke_hub_assets` and launches 
 
 - **เริ่มฟาร์ม**: one-button target planning, native auto combat, skills, rewards and quest claims. Start is off initially.
 - **Auto Equip**: enabled by default; the game's server chooses equipment by its own Combat Power policy. This does not guarantee the best DEX/CRIT build.
-- **วาร์ป / กลับ**: choose a destination, then return to the position saved before departure. Town is free; unlocked boss pillars show their Silver fee. Fields without a usable pillar use pathfinding. Level and boss gates remain enforced.
+- **วาร์ป / กลับ**: choose a destination, then return to the position saved before departure. Town is free; unlocked boss pillars show their Silver fee. A nearby unlocked pillar can shorten travel to a field, followed by walking. The Return button also shows any pillar fee. Other routes use pathfinding. Level and boss gates remain enforced.
 - Boss detours stop on low health, slow kills or the five-potion boss budget. Failed boss spawns are remembered.
 - Dungeon requests require level, party and free-run checks. The observed Crypt requires level 90; end-to-end completion has not been verified.
 - **RightControl** hides/shows the window.
@@ -34,5 +34,7 @@ That URL already serves a different live DUKE HUB/Luarmor loader. Publishing thi
 ## Verification
 
 See [`FARM_TEST_RESULTS.md`](FARM_TEST_RESULTS.md). `farm_director_tests.luau` runs deterministic policy checks after the main script is loaded.
+
+Endpoint/asset verification: `node deployment/worker.test.mjs`.
 
 The supplied PNG artwork is bundled for this user-requested project. No asset license beyond the original owner's rights is asserted here.

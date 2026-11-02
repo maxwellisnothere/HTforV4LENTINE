@@ -67,3 +67,14 @@ These checks call selection/calculation methods. They do not send dungeon entry 
 - Live dungeon entry, party readiness, cross-place continuation, completion and extracted gear.
 - Long-distance route coverage for later zones and long-duration recovery after disconnects.
 - Stat-based gear comparison, automatic reroll and automatic refinement are not enabled by the Start button; the existing manual gear tools remain available.
+
+## Travel, Auto Equip and GitHub loader (v3.1)
+
+- Discovered that the older `WarpTo` UI is not the active pillar implementation. A proximity request on that path failed, and the implementation was replaced with the verified `WarpPillarClient` protocol: activate the pillar prompt and call `PillarWarp` with the unlocked pillar ID.
+- Live trip from Bear Forest to Town completed through the free pillar route.
+- Return used the unlocked Boss01 pillar, paid the official 1,000 Silver fee, then walked back to the saved Field03 position. Arrival was verified within 9.16 studs of the original bookmark. The fee is shown on the applicable destination/Return button.
+- Auto Equip was enabled and the server attribute confirmed `true`. It uses the game's equipment policy; it is not a custom stat optimizer and the displayed total Combat Power can change with buffs/equipment.
+- Loaded the published GitHub `loader.luau` through `loadstring(game:HttpGet(...))()` in the connected client. Result: `ok=true`, main GUI present, version `3.1.0-travel`, no main/director error, all nine image files available.
+- The dedicated HTTP worker's routing, HEAD handling, rejected methods, upstream failure and all nine PNG byte counts/signatures passed local checks. The worker was not deployed.
+- `api.dukehub.lol/loader` was observed serving an existing DUKE HUB/Luarmor loader. It was not modified. The repository includes a game-specific dispatch snippet for its backend owner to integrate.
+- The deterministic suite now adds three travel-route checks (Town free, unknown pillar locked, unknown destination not guessed), for 19 checks total.
