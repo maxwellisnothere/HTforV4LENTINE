@@ -2297,6 +2297,7 @@ do
 			self.phase, self.detail = "กำลังเฝ้าบอส", "ให้ Auto ของเกมฟาร์มตามเดิม • จำจุดกลับแล้ว"
 		else
 			self.enabled = false
+			self.hopMode = false
 			self.hop.token = (self.hop.token or 0) + 1
 			self.hop.busy = false
 			if self.travel.active then self:CancelTrip() end
