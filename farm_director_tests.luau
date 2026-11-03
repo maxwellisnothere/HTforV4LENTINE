@@ -488,4 +488,38 @@ test("return does not finish before delayed native Auto acknowledgement", functi
 	assert(manager.ResumeFarmAuto(fake, session, 18))
 end)
 
+test("ramp endpoints follow travel direction", function()
+	local ramp = {Position=Vector3.new(0,10,50), Size=Vector3.new(44,2,60),
+		CFrame=CFrame.new(0,10,50)*CFrame.Angles(math.rad(-25),0,0)}
+	local a,b = manager:RampEndpoints(ramp,Vector3.zero,Vector3.new(0,25,100))
+	assert(a and b and a.Z < b.Z)
+	local reverseA,reverseB = manager:RampEndpoints(ramp,Vector3.new(0,25,100),Vector3.zero)
+	assert(reverseA and reverseB and reverseA.Z > reverseB.Z)
+end)
+
+test("ramp routing ignores ramps behind beyond or far beside a trip", function()
+	for _,pos in ipairs({Vector3.new(0,0,-50),Vector3.new(0,0,150),Vector3.new(100,0,50)}) do
+		local ramp={Position=pos,Size=Vector3.new(44,2,60),CFrame=CFrame.new(pos)}
+		assert(manager:RampEndpoints(ramp,Vector3.zero,Vector3.new(0,0,100))==nil)
+	end
+end)
+
+test("ramp routing rejects a stationary request", function()
+	local ramp={Position=Vector3.zero,Size=Vector3.new(44,2,60),CFrame=CFrame.new()}
+	assert(manager:RampEndpoints(ramp,Vector3.zero,Vector3.zero)==nil)
+end)
+
+test("boss combat overrides inherited skip flags without changing farm settings", function()
+	local farm={SkipBoss=true,SkipLeader=true,Radius=30,Only={bear=true},Exclude={boss=true}}
+	local combat=manager:BossCombatSettings(farm,{bear=true},16)
+	assert(combat.SkipBoss==false and combat.SkipLeader==false and combat.Exclude.bear)
+	assert(next(combat.Only)==nil and combat.Radius==60 and combat.NormalAttack)
+	assert(farm.SkipBoss and farm.SkipLeader and farm.Radius==30 and farm.Only.bear)
+end)
+
+test("boss combat keeps size-aware radius and unrelated potion settings", function()
+	local combat=manager:BossCombatSettings({HpPercent=75},{},72)
+	assert(combat.Range==92 and combat.Radius==92 and combat.HpPercent==75)
+end)
+
 getgenv().__CodexFarmDirectorTests = results

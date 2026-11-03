@@ -1,6 +1,8 @@
 # DUKE HUB — Hunting Together RPG
 
-Current version: **3.3.3-farm-resume**.
+Current version: **3.3.4-ramp-route**.
+
+Island travel now falls back to the map's actual bridge ramps when the navigation mesh cannot connect walkable slopes. It validates normal paths between ramp endpoints before walking across each ramp. Boss trips also temporarily disable the game's Skip Boss/Skip Leader filters, so a farm preset that excludes bosses cannot prevent boss combat; the original filters return at the farm.
 
 The assistant now remembers Auto/settings changes made while waiting at the farm, including enabling Auto after starting the watcher. Temporary boss and teleport states cannot overwrite that snapshot. On return it reapplies the saved filters, resets native Auto at the farm to refresh the game's target/area anchor, and waits for the original Auto state to remain confirmed before finishing. A failed Auto acknowledgement produces an explicit status instead of reporting successful farming. Deliberately disabled Auto stays disabled.
 

@@ -1,5 +1,14 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.4-ramp-route — 2026-11-04
+
+- Extended the return-to-farm check to real boss travel. The first attempt found an outbound failure: the game navigation mesh reported `NoPath` across the physically walkable Field11/Field12 ramp. A normal movement probe crossed that ramp successfully. The fallback now uses actual map ramp endpoints, validates ordinary paths between them and retains bounded stuck recovery. Pillar approach selection accepts these validated composite routes too.
+- Found an inherited combat filter: this account's farm preset had `SkipBoss=true` and `SkipLeader=true`. Selecting a boss and enabling Auto alone did not clear these. Boss-specific settings now disable both flags and verify they are cleared before combat; a cloned settings table preserves the original farm preset for restoration.
+- First extended live run: reached the source pillar at **9.65 studs**, warped to Boss01, then observed **Terra Colossus HP 32,614 -> 0**, using **1 HP potion**. The skip-filter adjustment was applied manually during this diagnostic run before being integrated into the patch. Return arrived within **3.12 studs**, restored potion/target settings and Auto, and observed a selected **Gem Armadillo HP 2,385 -> 0**. Cleanup restored the initial Auto/settings and position within **1.33 studs**. Observed net Silver delta was **-1,599**, including normal travel and rewards.
+- **Integrated patch run passed without a mid-fight adjustment:** `bigboss_thornback_behemoth` HP **132,884 -> 0**, **1 HP potion**, then return within **3.15 studs**. Farm filters, original potion slot/threshold and Auto were confirmed restored. Native Auto selected **Violet Wyvern**, observed HP **4,787 -> 2,160**. Cleanup stopped the assistant, restored the original Auto/settings and ended within **3.89 studs** of its starting position. Observed net Silver delta was **-4,689**, including normal fees/rewards. Tests temporarily used farm radius 60 for available targets, then restored radius 30. These observations verify two specific boss/return cases, not all bosses, damage attribution, or overnight reliability.
+- Deterministic policy checks: **77 passed, 0 failed**, including ramp direction/selection and boss-filter isolation. Loader routing/error checks and all nine PNG assets passed.
+- Dungeon eligibility was inspected again: the connected universe exposes `AdminOnly=true` and this account has no admin entitlement. No dungeon-entry request or completion claim was made.
+
 ## Version 3.3.3-farm-resume — 2026-11-04
 
 Customer feedback: the character returned to the saved farm location but did not resume attacking.

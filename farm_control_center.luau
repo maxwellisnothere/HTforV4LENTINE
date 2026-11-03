@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.3-farm-resume"}
+local runtime = {alive = true, connections = {}, version = "3.3.4-ramp-route"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -2143,6 +2143,70 @@ do
 
 	-- A single worker advances waypoints every frame, independently of the UI tick.
 	-- Repeated Walk calls for the same goal do not restart a path.
+	function director:RampEndpoints(ramp, from, goal)
+		local delta = Vector3.new(goal.X - from.X, 0, goal.Z - from.Z)
+		if delta.Magnitude < 1 then return nil end
+		local offset = Vector3.new(ramp.Position.X - from.X, 0, ramp.Position.Z - from.Z)
+		local along = offset:Dot(delta.Unit)
+		local side = (offset - delta.Unit * along).Magnitude
+		if along <= 0 or along >= delta.Magnitude or side > 60 then return nil end
+		local half = ramp.Size.Z / 2 + 12
+		local a = ramp.CFrame:PointToWorldSpace(Vector3.new(0, ramp.Size.Y / 2, half))
+		local b = ramp.CFrame:PointToWorldSpace(Vector3.new(0, ramp.Size.Y / 2, -half))
+		if (a - from).Magnitude > (b - from).Magnitude then a, b = b, a end
+		return a, b, along
+	end
+
+	function director:MapRampRoute(from, goal, active)
+		-- Some island ramps are physically walkable but split the navmesh.
+		-- Validate paths to/between their ends; only the actual ramp is walked
+		-- directly. Never invent a shortcut through a wall or between islands.
+		local root, humanoid = self:Character()
+		local map = workspace:FindFirstChild("Map")
+		local fields = map and map:FindFirstChild("BlockFields")
+		if not root or not humanoid or not fields then return nil end
+		local candidates = {}
+		for _, field in ipairs(fields:GetChildren()) do
+			local bridge = field:FindFirstChild("Bridge")
+			local ramp = bridge and bridge:FindFirstChild("Ramp")
+			if ramp and ramp:IsA("BasePart") and ramp.CanCollide and ramp.CFrame.UpVector.Y > 0.7 then
+				local a, b, distance = self:RampEndpoints(ramp, from, goal)
+				if a then table.insert(candidates, {a = a, b = b, distance = distance}) end
+			end
+		end
+		if #candidates == 0 or #candidates > 6 then return nil end
+		table.sort(candidates, function(a, b) return a.distance < b.distance end)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = {map}
+		params.RespectCanCollide = true
+		local height = humanoid.HipHeight + root.Size.Y / 2
+		local points, current = {}, from
+		local function appendPath(to)
+			if active and not active() then return false end
+			local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5,
+				AgentCanJump = self:CanNavigateJump(humanoid), WaypointSpacing = 5})
+			local ok = pcall(path.ComputeAsync, path, current, to)
+			if not ok or path.Status ~= Enum.PathStatus.Success or (active and not active()) then return false end
+			for _, point in ipairs(path:GetWaypoints()) do table.insert(points, point) end
+			current = to
+			return true
+		end
+		for _, candidate in ipairs(candidates) do
+			local ends = {}
+			for _, point in ipairs({candidate.a, candidate.b}) do
+				local hit = workspace:Raycast(point + Vector3.new(0, 20, 0), Vector3.new(0, -40, 0), params)
+				if not hit or hit.Normal.Y < 0.7 then return nil end
+				table.insert(ends, hit.Position + Vector3.new(0, height, 0))
+			end
+			if not appendPath(ends[1]) then return nil end
+			table.insert(points, {Position = ends[2], Action = Enum.PathWaypointAction.Walk})
+			current = ends[2]
+		end
+		if not appendPath(goal) then return nil end
+		return points
+	end
+
 	function director:Walk(goal, tolerance)
 		tolerance = tolerance or 7
 		local root, humanoid = self:Character()
@@ -2167,6 +2231,7 @@ do
 					local computed = pcall(path.ComputeAsync, path, root.Position, goal)
 					if not active() then return end
 					local points = computed and path.Status == Enum.PathStatus.Success and path:GetWaypoints()
+						or self:MapRampRoute(root.Position, goal, active)
 						or {{Position = goal, Action = Enum.PathWaypointAction.Walk}}
 					local retry = false
 					for index, point in ipairs(points) do
@@ -2290,6 +2355,7 @@ do
 		params.FilterType = Enum.RaycastFilterType.Include
 		params.FilterDescendantsInstances = {workspace:FindFirstChild("Map") or workspace.Terrain}
 		params.RespectCanCollide = true
+		local fallbackGoals = {}
 		for _, point in ipairs(self:PillarApproachPoints(source, root.Position)) do
 			if active and not active() then return nil end
 			local hit = workspace:Raycast(point + Vector3.new(0, 10, 0), Vector3.new(0, -28, 0), params)
@@ -2299,6 +2365,11 @@ do
 			local ok = pcall(path.ComputeAsync, path, root.Position, goal)
 			if active and not active() then return nil end
 			if ok and path.Status == Enum.PathStatus.Success then return goal end
+			table.insert(fallbackGoals, goal)
+		end
+		for _, goal in ipairs(fallbackGoals) do
+			if self:MapRampRoute(root.Position, goal, active) then return goal end
+			if active and not active() then return nil end
 		end
 		return nil
 	end
@@ -2488,6 +2559,17 @@ do
 		return excludes
 	end
 
+	function director:BossCombatSettings(original, excludes, size)
+		local settings = table.clone(original)
+		settings.Exclude, settings.Only = excludes, {}
+		settings.Mode, settings.Preset = "fight", "normal"
+		settings.SkipBoss, settings.SkipLeader = false, false
+		settings.AttackLeader, settings.NormalAttack, settings.UseSkills = true, true, true
+		local radius = math.clamp(math.max(60, (tonumber(size) or 16) + 20), 20, 150)
+		settings.FixedArea, settings.Range, settings.Radius, settings.Loot = true, radius, radius, true
+		return settings
+	end
+
 	function director:ConfigureTarget(id)
 		if self.configuredId == id then return true end
 		local settings = decodeAttribute("BotJson")
@@ -2507,12 +2589,7 @@ do
 		-- this room, then fill remaining slots deterministically with distant IDs.
 		local excludes = self:BuildTargetExclusions(id, priority)
 		if not excludes then self.detail = "ตัวกรองมอนสเตอร์ใกล้ตัวเกินขีดจำกัดของเกม"; return false end
-		settings.Exclude, settings.Only = excludes, {}
-		settings.Mode, settings.Preset = "fight", "normal"
-		settings.AttackLeader, settings.NormalAttack, settings.UseSkills = true, true, true
-		local targetSize = tonumber((MonsterData[id] or {}).Size) or 16
-		local radius = math.clamp(math.max(60, targetSize + 20), 20, 150)
-		settings.FixedArea, settings.Range, settings.Radius, settings.Loot = true, radius, radius, true
+		settings = self:BossCombatSettings(settings, excludes, (MonsterData[id] or {}).Size)
 		local event = remote("SetBotSettings")
 		if not event then self.phase, self.detail = "หยุด: ตั้งเป้าหมายไม่ได้", "ไม่พบ SetBotSettings"; return false end
 		event:FireServer(settings)
@@ -2916,6 +2993,7 @@ end
 			session.botChanged = true
 			if not self:ConfigureTarget(plan.id) then self:FinishBoss("ตั้งตัวกรองบอสไม่ได้", false); return end
 			local settings, confirmed = decodeAttribute("BotJson"), true
+			if settings.SkipBoss == true or settings.SkipLeader == true then confirmed = false end
 			if type(settings.Exclude) ~= "table" or settings.Exclude[plan.id] == true then confirmed = false else
 				for id in pairs(self.sentExcludes or {}) do
 					if settings.Exclude[id] ~= true then confirmed = false; break end
