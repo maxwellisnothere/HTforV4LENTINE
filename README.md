@@ -1,6 +1,8 @@
 # DUKE HUB — Hunting Together RPG
 
-Current version: **3.3.2-boss-entry**.
+Current version: **3.3.3-farm-resume**.
+
+The assistant now remembers Auto/settings changes made while waiting at the farm, including enabling Auto after starting the watcher. Temporary boss and teleport states cannot overwrite that snapshot. On return it reapplies the saved filters, resets native Auto at the farm to refresh the game's target/area anchor, and waits for the original Auto state to remain confirmed before finishing. A failed Auto acknowledgement produces an explicit status instead of reporting successful farming. Deliberately disabled Auto stays disabled.
 
 ## Run
 

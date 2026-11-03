@@ -1,5 +1,16 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.3-farm-resume — 2026-11-04
+
+Customer feedback: the character returned to the saved farm location but did not resume attacking.
+
+- Found a stale-state path: server hopping used the Auto value saved when the watcher started, so enabling Auto afterward could still leave the return state OFF. Idle changes now refresh the farm snapshot; active trips and teleport continuation keep it frozen.
+- Return handling now reapplies the farm settings after arrival, waits for filter/potion acknowledgement, resets native Auto to refresh its target/fixed-area anchor, and requires one second of stable Auto-state confirmation. A 12-second Auto acknowledgement timeout reports failure. The completion check confirms Auto state, not guaranteed monster availability or damage.
+- **Live controlled return-leg check passed:** started the watcher with Auto OFF, enabled Auto afterward, confirmed the updated snapshot, applied the real boss target filter, made a short local departure, then used `BeginReturn` and the real travel/restore path. The saved farm filters returned; native Auto selected **Gem Armadillo**, whose observed HP fell **9,136 -> 6,863**. A temporary farm radius of 60 was used to ensure available targets. HP observation confirms combat activity but is not per-attacker damage attribution.
+- Cleanup restored the original radius/settings and Auto state, stopped the assistant and returned within **5.62 studs** of the original location. No warp fee was incurred by the local test. The existing boss-kill/hop tests below are historical; a fresh full boss kill/hop/dungeon cycle was not run for this patch.
+- Deterministic policy regression suite: **72 passed, 0 failed**, including late Auto changes, explicit Auto OFF, snapshot preservation during trips, restart acknowledgement and delayed acknowledgement.
+- Loader routing/error handling and all nine bundled PNG assets passed the existing Node checks.
+
 ## Version 3.3.2-boss-entry — 2026-11-03
 
 Customer feedback: Volcano Turtle required a manual Auto click; walks toward warp pillars often stalled.

@@ -431,4 +431,61 @@ test("pathfinding cannot plan jumps when the game disables jumping", function()
 	assert(manager:CanNavigateJump({UseJumpPower = true, JumpPower = 50, JumpHeight = 0}))
 end)
 
+test("idle farm snapshot follows Auto enabled after watcher start", function()
+	local fake = setmetatable({travel = {}, homeAuto = false,
+		NativeAutoEnabled = function() return true end,
+		NativeSettings = function() return {Radius = 42} end}, {__index = manager})
+	fake:CaptureIdleFarm()
+	assert(fake.homeAuto and fake.homeBot.Radius == 42)
+end)
+
+test("idle farm snapshot follows deliberate Auto off", function()
+	local fake = setmetatable({travel = {}, homeAuto = true,
+		NativeAutoEnabled = function() return false end,
+		NativeSettings = function() return {} end}, {__index = manager})
+	fake:CaptureIdleFarm()
+	assert(fake.homeAuto == false)
+end)
+
+test("trip and continuation cannot overwrite captured farming state", function()
+	for _, blocker in ipairs({"session", "lootTrip", "farmSnapshotFrozen", "travel"}) do
+		local fake = {travel = {}, homeAuto = true, NativeSettings = function() error("must not capture") end}
+		fake[blocker] = blocker == "travel" and {active = true} or true
+		manager.CaptureIdleFarm(fake)
+		assert(fake.homeAuto)
+	end
+end)
+
+test("return Auto waits for pause then stable reactivation", function()
+	local on = true
+	local fake = {NativeAutoEnabled = function() return on end,
+		SetNativeAuto = function(_, v) on = v end}
+	local session = {native = true}
+	assert(not manager.ResumeFarmAuto(fake, session, 10) and not on)
+	assert(not manager.ResumeFarmAuto(fake, session, 11) and on)
+	assert(manager.ResumeFarmAuto(fake, session, 12) and on)
+end)
+
+test("return preserves Auto off instead of forcing combat", function()
+	local on = true
+	local fake = {NativeAutoEnabled = function() return on end,
+		SetNativeAuto = function(_, v) on = v end}
+	local session = {native = false}
+	assert(not manager.ResumeFarmAuto(fake, session, 10))
+	assert(not manager.ResumeFarmAuto(fake, session, 11))
+	assert(manager.ResumeFarmAuto(fake, session, 12) and not on)
+end)
+
+test("return does not finish before delayed native Auto acknowledgement", function()
+	local on = false
+	local fake = {NativeAutoEnabled = function() return on end, SetNativeAuto = function() end}
+	local session = {native = true}
+	assert(not manager.ResumeFarmAuto(fake, session, 10))
+	assert(not manager.ResumeFarmAuto(fake, session, 11))
+	assert(not manager.ResumeFarmAuto(fake, session, 16))
+	on = true
+	assert(not manager.ResumeFarmAuto(fake, session, 17))
+	assert(manager.ResumeFarmAuto(fake, session, 18))
+end)
+
 getgenv().__CodexFarmDirectorTests = results

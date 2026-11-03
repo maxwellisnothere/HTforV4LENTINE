@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.2-boss-entry"}
+local runtime = {alive = true, connections = {}, version = "3.3.3-farm-resume"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -1612,6 +1612,40 @@ do
 		setAutoFarm(value)
 	end
 
+	function director:NativeAutoEnabled()
+		return player:GetAttribute("AutoOn") == true
+	end
+
+	function director:NativeSettings()
+		return decodeAttribute("BotJson")
+	end
+
+	function director:CaptureIdleFarm()
+		-- Keep user changes made after Start, but never capture the temporary
+		-- paused/boss state during a trip or after teleport continuation.
+		if self.session or self.lootTrip or self.travel.active or self.farmSnapshotFrozen then return end
+		self.homeBot, self.homeAuto = self:NativeSettings(), self:NativeAutoEnabled()
+	end
+
+	function director:ResumeFarmAuto(session, now)
+		-- Restart at home to reset the game's fixed-area anchor and old target.
+		if not session.autoResumeAt then
+			session.autoResumeAt, session.autoResumePaused = now, false
+		end
+		if not session.autoResumePaused then
+			self:SetNativeAuto(false)
+			if not self:NativeAutoEnabled() then session.autoResumePaused = true end
+			return false
+		end
+		self:SetNativeAuto(session.native == true)
+		if self:NativeAutoEnabled() ~= (session.native == true) then
+			session.autoResumeConfirmedAt = nil
+			return false
+		end
+		session.autoResumeConfirmedAt = session.autoResumeConfirmedAt or now
+		return now - session.autoResumeConfirmedAt >= 1
+	end
+
 	function director:TotalExp(level, progress)
 		local total = tonumber(progress) or 0
 		for previous = 1, math.max(1, tonumber(level) or 1) - 1 do
@@ -2519,6 +2553,7 @@ do
 		self.home = {zone = self:CurrentZone(), position = root.Position}
 		self.travel.bookmark = self.home
 		self.homeBot, self.homeAuto = decodeAttribute("BotJson"), player:GetAttribute("AutoOn") == true
+		self.farmSnapshotFrozen = false
 		toast("จำจุดฟาร์มนี้แล้ว", "good")
 		return true
 	end
@@ -2582,6 +2617,7 @@ do
 	function director:BeginSession(kind, plan)
 		local root = self:Character()
 		if not root or not self.home then return false end
+		self:CaptureIdleFarm()
 		local bot, native = decodeAttribute("BotJson"), player:GetAttribute("AutoOn") == true
 		if self.hopMode then bot, native = self.homeBot or bot, self.homeAuto == true end
 		self.session = {kind = kind, stage = "outbound", bot = bot, native = native,
@@ -2604,6 +2640,7 @@ do
 			if plan then self.cooldowns[plan.id] = os.clock() + 60 end
 			return false
 		end
+		self.farmSnapshotFrozen = true
 		return true
 	end
 
@@ -2762,6 +2799,13 @@ end
 			if not self.travel.completed then
 				local reason = self.travel.status; self:SetEnabled(false); self.detail = reason; return
 			end
+			if not session.homeRestoreStarted then
+				-- A warp or delayed update may supersede the restore sent on departure.
+				session.homeRestoreStarted, session.restored = true, false
+				session.homeArrivalDistance = self.home and (root.Position - self.home.position).Magnitude
+				self:CancelNavigation()
+				self:SetNativeAuto(false)
+			end
 			if os.clock() - (session.restoreAt or 0) < 1 then return end
 			self:RestoreSettings(session)
 			if session.potionChanged and (player:GetAttribute("PotionHpPercent") ~= session.potionPercent
@@ -2777,8 +2821,17 @@ end
 					return
 				end
 			end
-			self:SetNativeAuto(session.native)
-			if (player:GetAttribute("AutoOn") == true) ~= session.native then return end
+			if not self:ResumeFarmAuto(session, os.clock()) then
+				self.phase, self.detail = "กำลังคืน Auto ที่จุดฟาร์ม", "รอเกมยืนยันสถานะ Auto เดิม"
+				if os.clock() - (session.autoResumeAt or os.clock()) > 12 then
+					self:SetEnabled(false)
+					self.detail = "กลับถึงจุดเดิมแล้ว แต่เปิด/ปิด Auto ตามค่าเดิมไม่สำเร็จ กรุณาตรวจ Auto ของเกม"
+				end
+				return
+			end
+			self.lastFarmReturn = {at = os.clock(), auto = session.native == true,
+				distance = session.homeArrivalDistance}
+			self.farmSnapshotFrozen = false
 			self.session, self.plan = nil, nil
 			self.phase, self.detail = "กลับมาฟาร์มแล้ว", "คืนจุดและค่า Auto เดิม • เฝ้าบอสรอบต่อไป"
 			if session.stopAfterReturn then
@@ -2889,6 +2942,7 @@ end
 				session.potionCapped and ("ครบงบยาแล้ว • สู้ต่อจน HP ≤ " .. session.retreatPercent .. "% จึงถอย") or ("ใช้ยาเมื่อ HP < " .. session.healAt .. "% • สู้ต่อได้ขณะยังมียาในงบ"))
 			return
 		end
+		self:CaptureIdleFarm()
 		local boss = self:SelectedDefinition()
 		local alive = boss and workspace:GetAttribute("BossAlive_" .. boss.id)
 		local presence = boss and self:CurrentBossPresence(boss)
@@ -3003,6 +3057,7 @@ end
 		director.selectedBoss, director.hopMode, director.enabled = resume.selected, true, true
 		director.home = {zone = resume.home.zone, position = Vector3.new(resume.home.x, resume.home.y, resume.home.z)}
 		director.homeBot, director.homeAuto, director.equipBest = resume.bot, resume.native == true, resume.equip == true
+		director.farmSnapshotFrozen = true
 		director.travel.bookmark = {zone = director.home.zone, position = director.home.position, auto = director.homeAuto}
 		director.hop = {visited = type(resume.visited) == "table" and resume.visited or {}, count = resume.count,
 			max = math.clamp(tonumber(resume.max) or 10, 1, 10), nextAt = os.clock() + 20}
