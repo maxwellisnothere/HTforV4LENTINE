@@ -47,6 +47,8 @@ That URL already serves a different live DUKE HUB/Luarmor loader. Publishing thi
 
 See [`FARM_TEST_RESULTS.md`](FARM_TEST_RESULTS.md). `farm_director_tests.luau` runs deterministic policy checks after the main script is loaded.
 
+Client-side security test observations and remaining coverage gaps are recorded in [`SECURITY_TEST_RESULTS.md`](SECURITY_TEST_RESULTS.md), updated 2026-11-04. This documentation update does not change the runtime version or deploy server-side fixes.
+
 Endpoint/asset verification: `node deployment/worker.test.mjs`.
 
 The supplied PNG artwork is bundled for this user-requested project. No asset license beyond the original owner's rights is asserted here.
