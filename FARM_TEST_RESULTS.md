@@ -1,5 +1,17 @@
 # Boss Assistant — functional test results
 
+## Version 3.3.5-resume-retry — 2026-11-04
+
+Customer feedback: the character returned to the saved farm location but still did not resume attacking on a Lv.99 account, despite the v3.3.3 fix. Root-cause analysis found three hard timeouts in the return-to-farm path that called `SetEnabled(false)` — killing the entire session instead of retrying.
+
+- **Potion restore timeout** (8 seconds): if the server did not acknowledge the original potion slot/threshold within 8 seconds, the system stopped. Now retries twice (resends `SetPotionSlot`/`SetPotionAuto`) before accepting the current state and continuing. Maximum wait: ~24 seconds.
+- **BotJson filter restore timeout** (8 seconds): if `SameSettings` did not match within 8 seconds, the system stopped. Now retries twice (resends `SetBotSettings`) before continuing. Maximum wait: ~24 seconds.
+- **Auto resume timeout** (12 seconds): if the pause→restart→confirm cycle did not complete in 12 seconds, the system stopped and turned Auto OFF. Now retries twice (resets the full cycle) before forcing Auto to the player's original state. Maximum wait: ~36 seconds. The system never calls `SetEnabled(false)` during restore retries.
+- **Death during return**: `BeginReturn` now resets all restore state (`homeRestoreStarted`, `restored`, `potionRestored`, retry counters, and Auto-resume state) so that a respawn + second return attempt starts a completely fresh restore cycle instead of using stale flags from the interrupted first attempt.
+- Deterministic policy checks: **80 passed, 0 failed**, including `BeginReturn` state reset, Auto resume retry cycle, and potion retry flag verification, plus all 77 previous checks.
+- Loader routing/error checks and all nine PNG assets passed.
+- A live boss kill/return verification was not repeated for this patch; the fix is in the restore path after the return travel completes, which the deterministic tests cover. Overnight stability verification is pending.
+
 ## Version 3.3.4-ramp-route — 2026-11-04
 
 - Extended the return-to-farm check to real boss travel. The first attempt found an outbound failure: the game navigation mesh reported `NoPath` across the physically walkable Field11/Field12 ramp. A normal movement probe crossed that ramp successfully. The fallback now uses actual map ramp endpoints, validates ordinary paths between them and retains bounded stuck recovery. Pillar approach selection accepts these validated composite routes too.

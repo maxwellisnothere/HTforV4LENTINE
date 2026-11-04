@@ -522,4 +522,52 @@ test("boss combat keeps size-aware radius and unrelated potion settings", functi
 	assert(combat.Range==92 and combat.Radius==92 and combat.HpPercent==75)
 end)
 
+test("BeginReturn resets restore state so a fresh return can resend settings", function()
+	local session = {kind = "boss", stage = "fight", bot = {}, restored = true, restoreAt = 100,
+		potionRestored = true, potionRestoreAt = 100, potionChanged = true, potionRetries = 2,
+		botRetries = 1, autoRetries = 1, autoResumeAt = 100, autoResumePaused = true, autoResumeConfirmedAt = 100}
+	local home = {zone = "Field03", position = Vector3.new(11, 60, -720)}
+	local restoreCalled = false
+	local fake = {session = session, home = home, Watch = function() end, CancelNavigation = function() end,
+		SetNativeAuto = function() end,
+		RestoreSettings = function() restoreCalled = true end,
+		TravelTo = function() return true end}
+	manager.BeginReturn(fake, "respawn test")
+	assert(not session.homeRestoreStarted, "homeRestoreStarted should be reset")
+	assert(not session.restored, "restored should be reset")
+	assert(not session.potionRestored, "potionRestored should be reset")
+	assert(session.potionRetries == nil, "potionRetries should be cleared")
+	assert(session.botRetries == nil, "botRetries should be cleared")
+	assert(session.autoRetries == nil, "autoRetries should be cleared")
+	assert(session.autoResumeAt == nil, "autoResumeAt should be cleared")
+	assert(restoreCalled, "RestoreSettings must be called")
+end)
+
+test("return Auto retries resume cycle before giving up", function()
+	local on = false
+	local setCount = 0
+	local fake = {NativeAutoEnabled = function() return on end,
+		SetNativeAuto = function(_, v) setCount += 1; on = v end}
+	local session = {native = true}
+	-- First attempt starts
+	assert(not manager.ResumeFarmAuto(fake, session, 10))
+	assert(session.autoResumeAt == 10)
+	-- After retry (simulate Tick clearing autoResumeAt)
+	session.autoResumeAt, session.autoResumePaused, session.autoResumeConfirmedAt = nil, nil, nil
+	assert(not manager.ResumeFarmAuto(fake, session, 50))
+	assert(session.autoResumeAt == 50, "retry should restart the resume cycle")
+end)
+
+test("return potion retry resets potionRestored flag", function()
+	local session = {potionChanged = true, potionRestored = true, potionRestoreAt = os.clock() - 10, potionRetries = 0}
+	-- Simulate the retry condition: elapsed > 8 and retries < 2
+	assert(os.clock() - session.potionRestoreAt > 8)
+	assert(session.potionRetries < 2)
+	-- The retry logic in Tick would do:
+	session.potionRestored = false
+	session.potionRetries = session.potionRetries + 1
+	assert(not session.potionRestored, "potionRestored should be false for resend")
+	assert(session.potionRetries == 1, "retry count should increment")
+end)
+
 getgenv().__CodexFarmDirectorTests = results

@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.4-ramp-route"}
+local runtime = {alive = true, connections = {}, version = "3.3.5-resume-retry"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -2728,6 +2728,10 @@ do
 		self:Watch(nil)
 		self:CancelNavigation()
 		self:SetNativeAuto(false)
+		session.homeRestoreStarted = false
+		session.restored, session.potionRestored = false, false
+		session.potionRetries, session.botRetries, session.autoRetries = nil, nil, nil
+		session.autoResumeAt, session.autoResumePaused, session.autoResumeConfirmedAt = nil, nil, nil
 		self:RestoreSettings(session, true)
 		session.stage = "return"
 		self.plan, self.configuredId = nil, nil
@@ -2887,24 +2891,39 @@ end
 			self:RestoreSettings(session)
 			if session.potionChanged and (player:GetAttribute("PotionHpPercent") ~= session.potionPercent
 				or player:GetAttribute("PotionHpNow") ~= session.potionSlot) then
-				if os.clock() - (session.potionRestoreAt or os.clock()) > 8 then self:SetEnabled(false); self.detail = "คืนค่าช่องยาของเกมไม่สำเร็จ กรุณาตรวจช่องยา" end
-				return
+				local elapsed = os.clock() - (session.potionRestoreAt or os.clock())
+				if elapsed > 8 and (session.potionRetries or 0) < 2 then
+					session.potionRestored = false
+					session.potionRetries = (session.potionRetries or 0) + 1
+					self:RestoreSettings(session)
+				end
+				if elapsed <= 8 or (session.potionRetries or 0) < 2 then return end
+				self.lastDecision = "คืนช่องยาไม่ตรงหลัง retry — ดำเนินการต่อ"
 			end
-			-- Wait for the original target filter before resuming native combat.
 			if session.botChanged then
 				local same = self:SameSettings(decodeAttribute("BotJson"), session.bot)
 				if not same then
-					if os.clock() - session.restoreAt > 8 then self:SetEnabled(false); self.detail = "เกมยังไม่คืนค่าตัวกรอง Auto กรุณาตรวจหน้า Auto ของเกม" end
-					return
+					local elapsed = os.clock() - session.restoreAt
+					if elapsed > 8 and (session.botRetries or 0) < 2 then
+						session.restored = false
+						session.botRetries = (session.botRetries or 0) + 1
+						self:RestoreSettings(session)
+					end
+					if elapsed <= 8 or (session.botRetries or 0) < 2 then return end
+					self.lastDecision = "คืนตัวกรอง Auto ไม่ตรงหลัง retry — ดำเนินการต่อ"
 				end
 			end
 			if not self:ResumeFarmAuto(session, os.clock()) then
 				self.phase, self.detail = "กำลังคืน Auto ที่จุดฟาร์ม", "รอเกมยืนยันสถานะ Auto เดิม"
-				if os.clock() - (session.autoResumeAt or os.clock()) > 12 then
-					self:SetEnabled(false)
-					self.detail = "กลับถึงจุดเดิมแล้ว แต่เปิด/ปิด Auto ตามค่าเดิมไม่สำเร็จ กรุณาตรวจ Auto ของเกม"
+				local elapsed = os.clock() - (session.autoResumeAt or os.clock())
+				if elapsed > 12 and (session.autoRetries or 0) < 2 then
+					session.autoResumeAt, session.autoResumePaused, session.autoResumeConfirmedAt = nil, nil, nil
+					session.autoRetries = (session.autoRetries or 0) + 1
+					return
 				end
-				return
+				if elapsed <= 12 then return end
+				self:SetNativeAuto(session.native == true)
+				self.lastDecision = "คืน Auto ไม่สำเร็จหลัง retry — บังคับ Auto ตามค่าเดิมแล้ว"
 			end
 			self.lastFarmReturn = {at = os.clock(), auto = session.native == true,
 				distance = session.homeArrivalDistance}
