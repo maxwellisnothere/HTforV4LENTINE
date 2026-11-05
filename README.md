@@ -1,10 +1,19 @@
 # DUKE HUB — Hunting Together RPG
 
-Current version: **3.3.5-resume-retry**.
+Current version: **3.5.0-exploits**.
 
-The return-to-farm restore path now retries each step (potion slot, combat filters, Auto toggle) up to twice before accepting the current state, instead of stopping the entire session on the first timeout. Death during a return trip resets all restore flags so the second attempt starts fresh. The system never calls `SetEnabled(false)` during restore retries; if Auto still cannot be confirmed after all retries, it forces Auto to the player's original value rather than leaving it off.
+New **Exploits tab** with 37 one-tap buttons (no dropdowns — everything is shown directly), grouped into 7 sections:
+- **Rewards**: claim C8 / Monthly / Online / Makeup, and use EXP / Drop / Haste / Awakening potions (or all four at once).
+- **Achievements**: claim all ready achievements, grant the War Rabbit mount, and cycle equipped titles.
+- **Combat**: Auto Combat (lock nearest + native Auto), **Auto Dodge** (auto-steps out of boss AoE warning circles to save HP/potions), Anchor (knockback immunity), Noclip, and a skill button.
+- **Camera**: max zoom-out / reset.
+- **Warp**: Town and Boss01–05, plus a pillar-warp.
+- **Shop & Storage**: sell junk, expand bag, go to storage, deposit/withdraw refine stones, refine +1.
+- **Utility**: clear cheat tag, save loadout, sit & rest, stand up, and grab nearby loot boxes/drops.
 
-Previous: island ramp routing, boss skip-filter isolation, Auto snapshot after late enable, and pause→restart→confirm return cycle.
+All other pages now open fully expanded — the old click-to-expand sections no longer hide their buttons.
+
+Previous: Anti-AFK toggle (VirtualUser every 55s), return-to-farm resume retry, island ramp routing.
 
 ## Run
 

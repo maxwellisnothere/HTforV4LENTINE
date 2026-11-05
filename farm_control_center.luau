@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.3.5-resume-retry"}
+local runtime = {alive = true, connections = {}, version = "3.5.0-exploits"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -384,6 +384,7 @@ local PAGE_TITLES = {
 	boss = "BOSS RADAR  /  บอส",
 	dungeon = "DUNGEONS  /  ดันเจี้ยน",
 	gear = "EQUIPMENT  /  อุปกรณ์",
+	exploits = "EXPLOITS  /  ช่องโหว่",
 }
 
 local function makePage(id)
@@ -568,6 +569,7 @@ local state = {
 	codesProcessed = false,
 	lastJunkSell = 0,
 	lastQuestPlan = 0,
+	antiAFK = true,
 }
 
 local director = {
@@ -635,6 +637,7 @@ local farmPage = makePage("farm")
 local bossPage = makePage("boss")
 local dungeonPage = makePage("dungeon")
 local gearPage = makePage("gear")
+local exploitsPage = makePage("exploits")
 
 makeNav("play", "เฝ้าบอส", 1, ASSETS.Overview)
 makeNav("rewards", "รางวัล / โค้ด", 2, ASSETS.Rewards)
@@ -643,6 +646,567 @@ makeNav("boss", "บอส 10 นาที", 4, ASSETS.Boss)
 makeNav("dungeon", "ดันเจี้ยน", 5, ASSETS.Dungeon)
 makeNav("gear", "อุปกรณ์", 6, ASSETS.Gear)
 makeNav("travel", "วาร์ป / กลับ", 7, ASSETS.Dungeon)
+makeNav("exploits", "ช่องโหว่", 8, ASSETS.Gear)
+
+do
+	local function requireRemote(name)
+		local r = remote(name)
+		if not r then error(name .. " not found", 0) end
+		return r
+	end
+
+	local function getHRP()
+		local c = player.Character
+		local h = c and c:FindFirstChild("HumanoidRootPart")
+		if not h then error("No character", 0) end
+		return h
+	end
+
+	local function tpAndClear(x, y, z)
+		getHRP().CFrame = CFrame.new(x, y, z)
+		task.wait(0.3)
+		player:SetAttribute("CheatTag", nil)
+	end
+
+	local function makeExploitSection(title, order, actions)
+		local ROW_H = 40
+		local GAP = 6
+		local sectionHeight = 36 + #actions * (ROW_H + GAP)
+		local section = new("Frame", {
+			Name = title, Size = UDim2.new(1, -5, 0, sectionHeight),
+			BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.32,
+			BorderSizePixel = 0, LayoutOrder = order,
+		}, exploitsPage)
+		corner(section, 8)
+		stroke(section, COLORS.Line, 0.68, 1)
+		new("TextLabel", {
+			Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 22),
+			BackgroundTransparency = 1, Text = title, TextColor3 = COLORS.Cyan,
+			TextSize = 14, Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, section)
+
+		for index, action in ipairs(actions) do
+			local row = new("Frame", {
+				Position = UDim2.fromOffset(10, 32 + (index - 1) * (ROW_H + GAP)),
+				Size = UDim2.new(1, -20, 0, ROW_H), BackgroundTransparency = 1,
+			}, section)
+			local btnColor = action.color or COLORS.Green
+			local button = new("TextButton", {
+				Name = action.name, Size = UDim2.new(0.44, 0, 0, 32),
+				Position = UDim2.fromOffset(0, 4), BackgroundColor3 = btnColor,
+				BackgroundTransparency = 0.82, BorderSizePixel = 0,
+				Text = action.name, TextColor3 = COLORS.Text, TextSize = 12,
+				Font = Enum.Font.GothamBold, AutoButtonColor = false,
+			}, row)
+			corner(button, 6)
+			stroke(button, btnColor, 0.5, 1)
+			local status = new("TextLabel", {
+				Position = UDim2.new(0.46, 0, 0, 0), Size = UDim2.new(0.54, 0, 1, 0),
+				BackgroundTransparency = 1, Text = action.hint or "",
+				TextColor3 = COLORS.Sub, TextSize = 11, Font = Enum.Font.Gotham,
+				TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+			}, row)
+			local busy = false
+			track(button.MouseButton1Click:Connect(function()
+				if busy then return end
+				busy = true
+				button.Text = "..."
+				status.TextColor3 = COLORS.Cyan
+				status.Text = "Working..."
+				task.spawn(function()
+					local ok, result = pcall(action.run, status)
+					if not runtime.alive then return end
+					local msg = ok and tostring(result or "Done") or displayError(result)
+					status.Text = msg
+					status.TextColor3 = ok and COLORS.Green or COLORS.Red
+					button.Text = action.name
+					busy = false
+				end)
+			end))
+		end
+	end
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 1: REWARDS (รางวัล)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("REWARDS  /  รางวัล", 1, {
+		{name = "Claim C8", hint = "+100K Silver", run = function()
+			local before = player:GetAttribute("Silver")
+			requireRemote("RewardAction"):FireServer("c8")
+			task.wait(0.5)
+			local gain = (player:GetAttribute("Silver") or 0) - (before or 0)
+			return gain > 0 and ("+"..comma(gain).." Silver") or "Already claimed"
+		end},
+		{name = "Claim Monthly", hint = "30 days login", run = function(st)
+			local ra = requireRemote("RewardAction")
+			local before = player:GetAttribute("Silver")
+			for i = 1, 30 do
+				ra:FireServer("month", i)
+				if i % 5 == 0 then st.Text = i.."/30"; task.wait(0.05) end
+			end
+			task.wait(0.3)
+			local gain = (player:GetAttribute("Silver") or 0) - (before or 0)
+			return gain > 0 and ("+"..comma(gain).." Silver") or "All claimed"
+		end},
+		{name = "Claim Online", hint = "6 playtime tiers", run = function()
+			local ra = requireRemote("RewardAction")
+			for i = 1, 6 do ra:FireServer("online", i) end
+			return "6 tiers fired"
+		end},
+		{name = "Claim Makeup", hint = "Makeup days", run = function()
+			local ra = requireRemote("RewardAction")
+			for i = 1, 10 do ra:FireServer("makeup", i) end
+			return "Makeup fired"
+		end},
+		{name = "EXP Potion", hint = "30min +EXP", color = COLORS.Blue, run = function()
+			requireRemote("UseItem"):FireServer("exp_potion")
+			return "boost_exp active"
+		end},
+		{name = "Drop Potion", hint = "30min +Drop", color = COLORS.Blue, run = function()
+			requireRemote("UseItem"):FireServer("drop_potion")
+			return "boost_drop active"
+		end},
+		{name = "Haste Potion", hint = "30min speed", color = COLORS.Blue, run = function()
+			requireRemote("UseItem"):FireServer("concentration_potion")
+			return "haste5 active"
+		end},
+		{name = "Awakening", hint = "Awakening buff", color = COLORS.Blue, run = function()
+			requireRemote("UseItem"):FireServer("awakening_potion")
+			return "Awakening active"
+		end},
+		{name = "All Potions", hint = "Use all 4 at once", color = COLORS.Purple, run = function()
+			local ui = requireRemote("UseItem")
+			ui:FireServer("exp_potion")
+			ui:FireServer("drop_potion")
+			ui:FireServer("concentration_potion")
+			ui:FireServer("awakening_potion")
+			return "4 buffs applied"
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 2: ACHIEVEMENTS & TITLES (ความสำเร็จ)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("ACHIEVEMENTS  /  ความสำเร็จ", 2, {
+		{name = "Claim All", hint = "Claim ready achievements", run = function(st)
+			local aa = requireRemote("AchieveAction")
+			local before = player:GetAttribute("AchieveReady") or 0
+			local fired = 0
+			for _, e in ipairs(AchievementData.List or {}) do
+				if e.Id then
+					aa:FireServer("claim", e.Id)
+					fired += 1
+					if fired % 10 == 0 then st.Text = fired.." fired"; task.wait(0.1) end
+				end
+			end
+			task.wait(0.5)
+			local after = player:GetAttribute("AchieveReady") or 0
+			local claimed = (before or 0) - (after or 0)
+			return claimed > 0 and (claimed.." claimed (was "..before..")") or "None ready"
+		end},
+		{name = "War Rabbit", hint = "Mount (no quest)", color = COLORS.Orange, run = function()
+			requireRemote("MountAction"):FireServer("ride", "mount_war_rabbit")
+			task.wait(0.3)
+			local mj = decodeAttribute("MountJson")
+			local owned = mj.Owned and mj.Owned.mount_war_rabbit
+			return owned and "Mount owned + active!" or "Server rejected"
+		end},
+		{name = "Next Title", hint = "Cycle equipped title", color = COLORS.Purple, run = function()
+			local ach = decodeAttribute("AchieveJson")
+			local titles = {}
+			for t in pairs(ach.Titles or {}) do table.insert(titles, t) end
+			table.sort(titles)
+			if #titles == 0 then return "No titles" end
+			local current = ach.Title or ""
+			local nextIdx = 1
+			for i, t in ipairs(titles) do
+				if t == current then nextIdx = (i % #titles) + 1; break end
+			end
+			local pick = titles[nextIdx]
+			requireRemote("AchieveAction"):FireServer("equip", pick, nil)
+			task.wait(0.4)
+			local after = decodeAttribute("AchieveJson")
+			return (after.Title == pick) and ("Equipped: "..pick) or ("Tried: "..pick)
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 3: COMBAT (การต่อสู้)
+	-- ═══════════════════════════════════════════════
+	local anchorOn = false
+	local noclipOn = false
+	local noclipConn = nil
+	local dodgeOn = false
+	local dodgeConns = {}
+	local dodgeCount = 0
+
+	local function startDodge(statusLabel)
+		if dodgeOn then return end
+		dodgeOn = true
+		dodgeCount = 0
+		local SAFE_MARGIN = 5
+		local DANGER_COLOR = Color3.fromRGB(240, 62, 56)
+		local function isDangerPart(p)
+			if not p:IsA("BasePart") then return false end
+			local c = p.Color
+			return math.abs(c.R - DANGER_COLOR.R) < 0.08
+				and math.abs(c.G - DANGER_COLOR.G) < 0.08
+				and math.abs(c.B - DANGER_COLOR.B) < 0.08
+		end
+		local function dodgeFrom(part)
+			if not dodgeOn or not runtime.alive then return end
+			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not hrp then return end
+			local cPos = part.Position
+			local pPos = hrp.Position
+			local dx = pPos.X - cPos.X
+			local dz = pPos.Z - cPos.Z
+			local dist = math.sqrt(dx * dx + dz * dz)
+			local radius = math.max(part.Size.X, part.Size.Z) / 2 + SAFE_MARGIN
+			if dist < radius then
+				local angle = math.atan2(dz, dx)
+				if dist < 0.5 then angle = math.random() * math.pi * 2 end
+				local safeX = cPos.X + math.cos(angle) * (radius + 2)
+				local safeZ = cPos.Z + math.sin(angle) * (radius + 2)
+				hrp.CFrame = CFrame.new(safeX, pPos.Y, safeZ)
+				player:SetAttribute("CheatTag", nil)
+				dodgeCount += 1
+				if statusLabel then
+					statusLabel.Text = "Dodged "..dodgeCount.."x"
+					statusLabel.TextColor3 = COLORS.Green
+				end
+			end
+		end
+		local function onBossPart(child)
+			if not dodgeOn or not runtime.alive then return end
+			task.defer(function()
+				if child:IsA("BasePart") and isDangerPart(child) then
+					dodgeFrom(child)
+				end
+				if child:IsA("Model") or child:IsA("Folder") then
+					for _, p in child:GetDescendants() do
+						if isDangerPart(p) then dodgeFrom(p) end
+					end
+					child.DescendantAdded:Connect(function(p)
+						if isDangerPart(p) then task.defer(dodgeFrom, p) end
+					end)
+				end
+			end)
+		end
+		local bossFxFolder = workspace:FindFirstChild("LumiBossFx")
+		if bossFxFolder then
+			local conn = bossFxFolder.ChildAdded:Connect(onBossPart)
+			table.insert(dodgeConns, conn)
+			track(conn)
+		end
+		local bossSkillFxFolder = workspace:FindFirstChild("LumiBossSkillFx")
+		if bossSkillFxFolder then
+			local conn = bossSkillFxFolder.ChildAdded:Connect(onBossPart)
+			table.insert(dodgeConns, conn)
+			track(conn)
+		end
+		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		if remotes then
+			local bossFxRemote = remotes:FindFirstChild("BossFx")
+			if bossFxRemote then
+				local conn = bossFxRemote.OnClientEvent:Connect(function(action, bossId, skillId, zones, warnTime)
+					if not dodgeOn or not runtime.alive then return end
+					if action ~= "warn" or type(zones) ~= "table" then return end
+					task.defer(function()
+						local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+						if not hrp then return end
+						local pPos = hrp.Position
+						for _, zone in zones do
+							if type(zone) ~= "table" then continue end
+							local center = zone.Center
+							if typeof(center) ~= "Vector3" then
+								if typeof(zone.CFrame) == "CFrame" then center = zone.CFrame.Position
+								else continue end
+							end
+							local radius = (zone.Radius or 15) + SAFE_MARGIN
+							local dx = pPos.X - center.X
+							local dz = pPos.Z - center.Z
+							local dist = math.sqrt(dx * dx + dz * dz)
+							if dist < radius then
+								local angle = math.atan2(dz, dx)
+								if dist < 0.5 then angle = math.random() * math.pi * 2 end
+								hrp.CFrame = CFrame.new(
+									center.X + math.cos(angle) * (radius + 2),
+									pPos.Y,
+									center.Z + math.sin(angle) * (radius + 2)
+								)
+								player:SetAttribute("CheatTag", nil)
+								dodgeCount += 1
+								if statusLabel then
+									statusLabel.Text = "Dodged "..dodgeCount.."x"
+									statusLabel.TextColor3 = COLORS.Green
+								end
+								break
+							end
+						end
+					end)
+				end)
+				table.insert(dodgeConns, conn)
+				track(conn)
+			end
+		end
+	end
+
+	local function stopDodge()
+		dodgeOn = false
+		for _, c in dodgeConns do pcall(function() c:Disconnect() end) end
+		table.clear(dodgeConns)
+	end
+
+	makeExploitSection("COMBAT  /  การต่อสู้", 3, {
+		{name = "Auto Combat", hint = "Lock nearest + Auto ON", color = COLORS.Orange, run = function()
+			local hrp = getHRP()
+			local best, bestDist = nil, 999
+			for _, m in workspace:GetDescendants() do
+				if m:IsA("Model") and m:HasTag("Monster") then
+					local mhrp = m:FindFirstChild("HumanoidRootPart")
+					if mhrp then
+						local hp = m:GetAttribute("HP") or 0
+						local d = (mhrp.Position - hrp.Position).Magnitude
+						if hp > 0 and d < bestDist then best = m; bestDist = d end
+					end
+				end
+			end
+			if not best then return "No mob nearby" end
+			local lock = player:FindFirstChild("LumiLockTarget")
+			if lock then lock:Fire(best) end
+			player:SetAttribute("AutoOn", true)
+			local vim = game:GetService("VirtualInputManager")
+			vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+			task.wait(0.1)
+			vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+			return "Locked "..best.Name.." ("..math.floor(bestDist).."s)"
+		end},
+		{name = "Auto Dodge", hint = "Dodge boss AoE circles", color = COLORS.Red, run = function(st)
+			if dodgeOn then
+				stopDodge()
+				return "Dodge OFF (dodged "..dodgeCount.."x)"
+			else
+				startDodge(st)
+				return "Dodge ON — watching circles"
+			end
+		end},
+		{name = "Anchor Toggle", hint = "Knockback immunity", run = function()
+			anchorOn = not anchorOn
+			getHRP().Anchored = anchorOn
+			return anchorOn and "Anchored (immune)" or "Unanchored"
+		end},
+		{name = "Noclip Toggle", hint = "Walk through walls", color = COLORS.Orange, run = function()
+			noclipOn = not noclipOn
+			if noclipOn then
+				if noclipConn then noclipConn:Disconnect() end
+				noclipConn = RunService.Stepped:Connect(function()
+					local c = player.Character
+					if not c then return end
+					for _, p in c:GetDescendants() do
+						if p:IsA("BasePart") then p.CanCollide = false end
+					end
+				end)
+				track(noclipConn)
+				return "Noclip ON"
+			else
+				if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
+				return "Noclip OFF"
+			end
+		end},
+		{name = "Use Skill", hint = "doubleattack", run = function()
+			requireRemote("UseSkill"):FireServer("doubleattack")
+			return "Skill fired"
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 4: CAMERA & MOVEMENT (กล้อง/เคลื่อนที่)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("CAMERA  /  กล้อง", 4, {
+		{name = "Max Zoom Out", hint = "Zoom 200 + FOV 100", run = function()
+			player.CameraMaxZoomDistance = 200
+			local cam = workspace.CurrentCamera
+			if cam then cam.FieldOfView = 100 end
+			return "Zoom 200, FOV 100"
+		end},
+		{name = "Reset Camera", hint = "Default zoom + FOV", run = function()
+			player.CameraMaxZoomDistance = 40
+			local cam = workspace.CurrentCamera
+			if cam then cam.FieldOfView = 70 end
+			return "Default restored"
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 5: WARP (วาร์ป)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("WARP  /  วาร์ป", 5, {
+		{name = "Town", hint = "(22, 1, 71)", run = function()
+			tpAndClear(22, 5, 71)
+			return "Warped to Town"
+		end},
+		{name = "Boss01", hint = "Forest boss", color = COLORS.Orange, run = function()
+			tpAndClear(18, 57, -799)
+			return "Warped to Boss01"
+		end},
+		{name = "Boss02", hint = "Dry forest", color = COLORS.Orange, run = function()
+			tpAndClear(18, 113, -1693)
+			return "Warped to Boss02"
+		end},
+		{name = "Boss03", hint = "Desert", color = COLORS.Orange, run = function()
+			tpAndClear(18, 169, -2587)
+			return "Warped to Boss03"
+		end},
+		{name = "Boss04", hint = "Snow", color = COLORS.Orange, run = function()
+			tpAndClear(18, 225, -3481)
+			return "Warped to Boss04"
+		end},
+		{name = "Boss05", hint = "Volcano", color = COLORS.Red, run = function()
+			tpAndClear(18, 281, -4373)
+			return "Warped to Boss05"
+		end},
+		{name = "PillarWarp", hint = "Use warp pillar remote", color = COLORS.Blue, run = function()
+			tpAndClear(22, 5, 71)
+			task.wait(0.3)
+			requireRemote("PillarWarp"):FireServer("Boss01")
+			return "PillarWarp to Boss01"
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 6: SHOP & STORAGE (ร้านค้า/คลัง)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("SHOP & STORAGE  /  ร้านค้า", 6, {
+		{name = "Sell Junk", hint = "TP merchant + sell", run = function()
+			local before = player:GetAttribute("Silver")
+			tpAndClear(-51, 5, 30)
+			task.wait(0.3)
+			requireRemote("ShopSellJunk"):FireServer()
+			task.wait(0.5)
+			local gain = (player:GetAttribute("Silver") or 0) - (before or 0)
+			local bag = player:GetAttribute("BagSlotsUsed") or 0
+			return gain > 0 and ("+"..comma(gain).." Silver, bag="..bag) or ("Bag="..bag)
+		end},
+		{name = "Expand Bag", hint = "Costs Silver", run = function()
+			local before = player:GetAttribute("BagSlotsMax") or 0
+			requireRemote("BagExpand"):FireServer()
+			task.wait(0.7)
+			local after = player:GetAttribute("BagSlotsMax") or 0
+			return after > before and (before.." -> "..after.." slots") or ("Max="..after.." (no change)")
+		end},
+		{name = "Go Storage", hint = "TP to storage NPC", run = function()
+			tpAndClear(-47, 5, 17)
+			return "At storage NPC"
+		end},
+		{name = "Deposit Stones", hint = "Store refine_stone", color = COLORS.Blue, run = function()
+			tpAndClear(-47, 5, 17)
+			task.wait(0.3)
+			local before = (decodeAttribute("StorageJson").refine_stone) or 0
+			requireRemote("StorageAction"):FireServer("deposit", "refine_stone", 999)
+			task.wait(0.5)
+			local after = (decodeAttribute("StorageJson").refine_stone) or 0
+			return after > before and ("Stored +"..(after - before).." (now "..after..")") or ("Storage: "..after)
+		end},
+		{name = "Withdraw Stones", hint = "Take refine_stone", color = COLORS.Blue, run = function()
+			tpAndClear(-47, 5, 17)
+			task.wait(0.3)
+			local before = (decodeAttribute("StorageJson").refine_stone) or 0
+			requireRemote("StorageAction"):FireServer("withdraw", "refine_stone", 999)
+			task.wait(0.5)
+			local after = (decodeAttribute("StorageJson").refine_stone) or 0
+			return after < before and ("Took "..(before - after).." (storage "..after..")") or ("Storage: "..after)
+		end},
+		{name = "Refine +1", hint = "TP blacksmith + refine", color = COLORS.Orange, run = function()
+			tpAndClear(-34, 5, -5)
+			task.wait(0.2)
+			local gearId = next(decodeAttribute("RefineJson"))
+			if not gearId then
+				gearId = next(decodeAttribute("GearJson"))
+			end
+			if not gearId then return "No gear found" end
+			requireRemote("RefineWeapon"):FireServer(gearId)
+			task.wait(0.3)
+			local rj = decodeAttribute("RefineJson")
+			local lvl = rj[gearId]
+			return gearId.." -> +"..(lvl or "?")
+		end},
+	})
+
+	-- ═══════════════════════════════════════════════
+	-- SECTION 7: UTILITY (เครื่องมือ)
+	-- ═══════════════════════════════════════════════
+	makeExploitSection("UTILITY  /  เครื่องมือ", 7, {
+		{name = "Clear CheatTag", hint = "Reset violation counter", run = function()
+			player:SetAttribute("CheatTag", nil)
+			return "Cleared"
+		end},
+		{name = "Grab Loot", hint = "Open boxes + drops near you", color = COLORS.Purple, run = function(st)
+			local CollectionService = game:GetService("CollectionService")
+			local hrp = getHRP()
+			local open = requireRemote("OpenLootBox")
+			local origin = hrp.Position
+			local targets = {}
+			for _, tag in {"LootBox", "Drop"} do
+				for _, obj in CollectionService:GetTagged(tag) do
+					if obj:IsA("BasePart") and obj.Parent and not obj:GetAttribute("LumiHiddenLocal") then
+						local d = (obj.Position - origin).Magnitude
+						if d < 300 then table.insert(targets, {obj = obj, d = d}) end
+					end
+				end
+			end
+			if #targets == 0 then return "No loot nearby" end
+			table.sort(targets, function(a, b) return a.d < b.d end)
+			local grabbed = 0
+			for i, t in targets do
+				if i > 25 then break end
+				hrp.CFrame = CFrame.new(t.obj.Position + Vector3.new(0, 3, 0))
+				task.wait(0.12)
+				local prompt = t.obj:FindFirstChild("OpenPrompt")
+				local fire = rawget(getgenv(), "fireproximityprompt")
+				if prompt and prompt.Enabled and type(fire) == "function" then
+					fire(prompt)
+				else
+					open:FireServer(t.obj)
+				end
+				grabbed += 1
+				if st then st.Text = "Grabbing "..grabbed.."/"..math.min(#targets, 25) end
+			end
+			hrp.CFrame = CFrame.new(origin)
+			player:SetAttribute("CheatTag", nil)
+			return "Opened "..grabbed.." loot"
+		end},
+		{name = "Save Loadout", hint = "Slot 1", run = function()
+			requireRemote("LoadoutAction"):FireServer("save", 1)
+			return "Loadout 1 saved"
+		end},
+		{name = "Sit & Rest", hint = "HP recovery", run = function()
+			tpAndClear(22, 5, 71)
+			task.wait(0.3)
+			local seats = game:GetService("CollectionService"):GetTagged("RestSeat")
+			if #seats == 0 then return "No seat found" end
+			local seat = seats[1]
+			local pos = seat:IsA("BasePart") and seat.Position or nil
+			if not pos then
+				for _, c in seat:GetChildren() do
+					if c:IsA("BasePart") then pos = c.Position; break end
+				end
+			end
+			if pos then
+				getHRP().CFrame = CFrame.new(pos + Vector3.new(0, 2, 0))
+				task.wait(0.2)
+				player:SetAttribute("CheatTag", nil)
+			end
+			requireRemote("SitToggle"):FireServer()
+			return "Sitting for HP regen"
+		end},
+		{name = "Stand Up", hint = "Stop sitting", run = function()
+			requireRemote("SitToggle"):FireServer()
+			return "Standing"
+		end},
+	})
+end
 
 do
 	local hero = makeCard(playPage, 146)
@@ -941,6 +1505,10 @@ makeToggle(farmPage, "No Clip", "ผ่านสิ่งกีดขวาง�
 		if type(s) == "table" and type(s.setEnabled) == "function" then s.setEnabled(v) else toast("ตัวควบคุม No Clip ไม่พร้อม", "bad") end
 	end)
 
+makeToggle(farmPage, "Anti-AFK", "กัน idle kick ด้วย VirtualUser ทุก 60 วินาที; เปิดค้างตลอดเซสชัน", COLORS.Cyan,
+	function() return state.antiAFK end, function(v) state.antiAFK = v end)
+
+
 local questCard = makeCard(farmPage, 96)
 titleLabel(questCard, "เควสต์ที่กำลังทำ", "กำลังอ่านข้อมูลเควสต์...")
 local questStatus = new("TextLabel", {
@@ -1111,12 +1679,12 @@ do
 		}, headerButton)
 		local arrow = new("TextLabel", {
 			Name = "Arrow", Position = UDim2.new(1, -32, 0, 0), Size = UDim2.fromOffset(26, 42),
-			BackgroundTransparency = 1, Text = "›", TextColor3 = COLORS.Sub,
+			BackgroundTransparency = 1, Text = "v", TextColor3 = COLORS.Sub,
 			TextSize = 20, Font = Enum.Font.Gotham,
 		}, headerButton)
 		local body = new("Frame", {
 			Name = "Body", Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 0),
-			BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false,
+			BackgroundTransparency = 1, BorderSizePixel = 0, Visible = true,
 		}, frame)
 		local layout = new("UIListLayout", {
 			Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
@@ -1126,7 +1694,7 @@ do
 			card.LayoutOrder = i
 			card.Parent = body
 		end
-		local expanded = false
+		local expanded = true
 		local function resize()
 			local height = layout.AbsoluteContentSize.Y
 			body.Size = UDim2.new(1, 0, 0, height)
@@ -3189,6 +3757,22 @@ end
 		end
 	end)
 end
+
+-- Anti-AFK: simulate input periodically to avoid idle kick
+task.spawn(function()
+	local VirtualUser = game:GetService("VirtualUser")
+	while runtime.alive do
+		if state.antiAFK then
+			pcall(function()
+				VirtualUser:CaptureController()
+				VirtualUser:ClickButton2(Vector2.new(0, 0))
+			end)
+		end
+		task.wait(55)
+	end
+end)
+
+
 
 do
 	local bestId, bestDef, bestScore, bestMonster = bestRepeatQuest()
