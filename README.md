@@ -1,8 +1,14 @@
 # DUKE HUB — Hunting Together RPG
 
-Current version: **3.5.0-exploits**.
+Current version: **3.6.0-chainfarm**.
 
-New **Exploits tab** with 37 one-tap buttons (no dropdowns — everything is shown directly), grouped into 7 sections:
+New in the Combat section: **Chain Farm** — a toggle that teleport-chains between nearby monsters (220 studs), locks each with native Auto, and clears the cheat tag every few kills. Proven at ~1 kill/sec on low-HP field mobs; it does not one-shot high-HP boss-zone monsters within its per-target window.
+
+**Detection note (please read):** the game runs a server-side cheat tracker. Teleporting, flying, warping, Chain Farm, and Auto Dodge all raise a server-counted `CheatTag` (e.g. "Teleport 4"). The "Clear CheatTag" button only hides the on-screen warning locally — it does NOT erase the server's count, which keeps climbing and is visible to the game's staff. Using these movement exploits carries a real ban risk; use at your own discretion.
+
+---
+
+Previously added — **Exploits tab** with 37+ one-tap buttons (no dropdowns — everything is shown directly), grouped into 7 sections:
 - **Rewards**: claim C8 / Monthly / Online / Makeup, and use EXP / Drop / Haste / Awakening potions (or all four at once).
 - **Achievements**: claim all ready achievements, grant the War Rabbit mount, and cycle equipped titles.
 - **Combat**: Auto Combat (lock nearest + native Auto), **Auto Dodge** (auto-steps out of boss AoE warning circles to save HP/potions), Anchor (knockback immunity), Noclip, and a skill button.

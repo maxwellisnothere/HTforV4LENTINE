@@ -21,7 +21,7 @@ if type(env.__CodexFarmCenter) == "table" and type(env.__CodexFarmCenter.Destroy
 	pcall(env.__CodexFarmCenter.Destroy)
 end
 
-local runtime = {alive = true, connections = {}, version = "3.5.0-exploits"}
+local runtime = {alive = true, connections = {}, version = "3.6.0-chainfarm"}
 env.__CodexFarmCenter = runtime
 
 local function track(connection)
@@ -840,6 +840,59 @@ do
 	local dodgeOn = false
 	local dodgeConns = {}
 	local dodgeCount = 0
+	local chainOn = false
+	local chainCount = 0
+
+	local function startChain(statusLabel)
+		if chainOn then return end
+		chainOn = true
+		chainCount = 0
+		local RADIUS = 220
+		task.spawn(function()
+			while chainOn and runtime.alive do
+				local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+				if not hrp then task.wait(0.4); continue end
+				local best, bestHrp, bestDist = nil, nil, 1/0
+				for _, m in workspace:GetDescendants() do
+					if m:IsA("Model") and m:HasTag("Monster") then
+						local mhrp = m:FindFirstChild("HumanoidRootPart")
+						if mhrp and (m:GetAttribute("HP") or 0) > 0 then
+							local d = (mhrp.Position - hrp.Position).Magnitude
+							if d <= RADIUS and d < bestDist then best, bestHrp, bestDist = m, mhrp, d end
+						end
+					end
+				end
+				if not best then
+					chainOn = false
+					if statusLabel then statusLabel.Text = "No mobs — stopped ("..chainCount..")"; statusLabel.TextColor3 = COLORS.Sub end
+					break
+				end
+				hrp.CFrame = bestHrp.CFrame * CFrame.new(0, 0, 6)
+				local lock = player:FindFirstChild("LumiLockTarget")
+				if lock then lock:Fire(best) end
+				player:SetAttribute("AutoOn", true)
+				local vim = game:GetService("VirtualInputManager")
+				vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+				task.wait(0.05)
+				vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+				local deadline = os.clock() + 2.5
+				while chainOn and runtime.alive and (best:GetAttribute("HP") or 0) > 0 and os.clock() < deadline do
+					task.wait(0.1)
+				end
+				if (best:GetAttribute("HP") or 0) <= 0 then
+					chainCount += 1
+					if statusLabel then statusLabel.Text = "Killed "..chainCount; statusLabel.TextColor3 = COLORS.Green end
+				end
+				if chainCount % 5 == 0 then player:SetAttribute("CheatTag", nil) end
+			end
+			player:SetAttribute("CheatTag", nil)
+		end)
+	end
+
+	local function stopChain()
+		chainOn = false
+		player:SetAttribute("CheatTag", nil)
+	end
 
 	local function startDodge(statusLabel)
 		if dodgeOn then return end
@@ -990,6 +1043,15 @@ do
 			else
 				startDodge(st)
 				return "Dodge ON — watching circles"
+			end
+		end},
+		{name = "Chain Farm", hint = "TP-chain kill mobs (220 studs)", color = COLORS.Purple, run = function(st)
+			if chainOn then
+				stopChain()
+				return "Chain OFF (killed "..chainCount..")"
+			else
+				startChain(st)
+				return "Chain ON — hunting"
 			end
 		end},
 		{name = "Anchor Toggle", hint = "Knockback immunity", run = function()
